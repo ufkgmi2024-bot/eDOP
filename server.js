@@ -44,7 +44,14 @@ function analyzeBP(sys, dia) {
     if (sys >= 140 || dia >= 90) {
         return {
             status: "warning",
-            message: "⚠️ Басым жогорулап жатат."
+            message: "⚠️ Басым жогорулап жатат. Врачка кайрылыңыз."
+        };
+    }
+
+    if (sys <= 90 || dia <= 60) {
+        return {
+            status: "warning",
+            message: "⚠️ Басым төмөндөп жатат. Врачка кайрылыңыз."
         };
     }
 
@@ -82,48 +89,84 @@ app.get('/api/stats', async (req, res) => {
         });
 
     } catch (e) {
-        res.status(500).json({ error: "Stats error" });
+        console.error('Stats error:', e);
+        res.status(500).json({ 
+            success: false,
+            error: "Stats error" 
+        });
     }
 });
 
 // ===== SEARCH PATIENT =====
 
 app.get('/api/patients/search/:inn', async (req, res) => {
-    const data = await readData();
-    const patient = data.patients.find(p => p.inn === req.params.inn);
+    try {
+        const data = await readData();
+        const patient = data.patients.find(p => p.inn === req.params.inn);
 
-    if (!patient) {
-        return res.json({ success: false });
+        if (!patient) {
+            return res.json({ 
+                success: false,
+                message: "Пациент табылган жок"
+            });
+        }
+
+        res.json({
+            success: true,
+            patient
+        });
+    } catch (e) {
+        console.error('Search error:', e);
+        res.status(500).json({
+            success: false,
+            error: "Издөөдө ката кетти"
+        });
     }
-
-    res.json({
-        success: true,
-        patient
-    });
 });
 
 // ===== GENERAL SEARCH =====
 
 app.get('/api/patients', async (req, res) => {
-    const data = await readData();
-    const search = req.query.search;
+    try {
+        const data = await readData();
+        const search = req.query.search || '';
 
-    if (!search) {
-        return res.json(data);
-    }
-
-    const found = data.patients.filter(p =>
-        p.fullName?.toLowerCase().includes(search.toLowerCase()) ||
-        p.inn.includes(search)
-    );
-
-    res.json({
-        success: true,
-        patients: found,
-        pagination: {
-            total: found.length
+        if (!search.trim()) {
+            return res.json({
+                success: true,
+                patients: data.patients,
+                pagination: {
+                    total: data.patients.length,
+                    page: 1,
+                    limit: data.patients.length
+                }
+            });
         }
-    });
+
+        const found = data.patients.filter(p => {
+            const fullName = p.fullName || p.full_name || '';
+            const inn = p.inn || '';
+            const searchLower = search.toLowerCase();
+            return fullName.toLowerCase().includes(searchLower) || 
+                   inn.includes(search);
+        });
+
+        res.json({
+            success: true,
+            patients: found,
+            pagination: {
+                total: found.length,
+                page: 1,
+                limit: found.length
+            }
+        });
+    } catch (e) {
+        console.error('Search error:', e);
+        res.status(500).json({
+            success: false,
+            error: "Издөөдө ката кетти"
+        });
+    }
 });
 
 // ===== NEW PATIENT =====
@@ -131,6 +174,14 @@ app.get('/api/patients', async (req, res) => {
 app.post('/api/patients', async (req, res) => {
     try {
         const { inn, fullName, birthDate, phone, address } = req.body;
+        
+        if (!inn || !fullName) {
+            return res.json({
+                success: false,
+                error: "ИНН жана аты-жөнү милдеттүү"
+            });
+        }
+
         const data = await readData();
 
         const exists = data.patients.find(p => p.inn === inn);
@@ -138,16 +189,18 @@ app.post('/api/patients', async (req, res) => {
         if (exists) {
             return res.json({
                 success: false,
-                error: "Мындай пациент бар"
+                error: "Мындай ИНН менен пациент бар"
             });
         }
 
         const patient = {
             inn,
-            fullName,
-            birthDate,
-            phone,
-            address,
+            fullName: fullName,
+            full_name: fullName, // Клиент тараптагы совместимость үчүн
+            birthDate: birthDate || '',
+            birth_date: birthDate || '', // Клиент тараптагы совместимость үчүн
+            phone: phone || '',
+            address: address || '',
             history: [],
             lastBP: null
         };
@@ -156,12 +209,16 @@ app.post('/api/patients', async (req, res) => {
         await writeData(data);
 
         res.json({
-            success: true
+            success: true,
+            message: "Пациент ийгиликтүү кошулду",
+            patient: patient
         });
 
     } catch (e) {
+        console.error('Save patient error:', e);
         res.status(500).json({
-            error: "Сактоо катасы"
+            success: false,
+            error: "Сактоодо ката кетти"
         });
     }
 });
@@ -171,14 +228,22 @@ app.post('/api/patients', async (req, res) => {
 app.post('/api/blood-pressure', async (req, res) => {
     try {
         const { inn, systolic, diastolic, pulse, notes } = req.body;
-        const data = await readData();
-
-        const patient = data.patients.find(p => p.inn === inn);
-
-        if (!patient) {
+        
+        if (!inn || !systolic || !diastolic) {
             return res.json({
                 success: false,
-                error: "Пациент жок"
+                error: "ИНН, жогорку жана төмөнкү басым милдеттүү"
+            });
+        }
+
+        const data = await readData();
+
+        const patientIndex = data.patients.findIndex(p => p.inn === inn);
+
+        if (patientIndex === -1) {
+            return res.json({
+                success: false,
+                error: "Пациент табылган жок"
             });
         }
 
@@ -186,35 +251,73 @@ app.post('/api/blood-pressure', async (req, res) => {
 
         const record = {
             check_date: new Date().toISOString(),
-            systolic,
-            diastolic,
-            pulse,
-            notes,
+            systolic: Number(systolic),
+            diastolic: Number(diastolic),
+            pulse: pulse ? Number(pulse) : 0,
+            notes: notes || '',
             ai_status: ai.status
         };
 
-        if (!patient.history) patient.history = [];
+        const patient = data.patients[patientIndex];
+
+        if (!patient.history) {
+            patient.history = [];
+        }
 
         patient.history.push(record);
 
         patient.lastBP = {
-            systolic,
-            diastolic,
-            pulse,
+            systolic: Number(systolic),
+            diastolic: Number(diastolic),
+            pulse: pulse ? Number(pulse) : 0,
             date: new Date().toISOString(),
             status: ai.status
         };
 
         await writeData(data);
 
+        // Трендди текшерүү
+        let trend = null;
+        if (patient.history.length >= 2) {
+            const sorted = [...patient.history].sort((a, b) => 
+                new Date(a.check_date) - new Date(b.check_date)
+            );
+            const last = sorted[sorted.length - 1];
+            const prev = sorted[sorted.length - 2];
+            
+            const diffSystolic = last.systolic - prev.systolic;
+            const diffDiastolic = last.diastolic - prev.diastolic;
+            
+            let trendMessage = '';
+            if (Math.abs(diffSystolic) < 5 && Math.abs(diffDiastolic) < 5) {
+                trendMessage = '➡️ Басым туруктуу';
+            } else if (diffSystolic > 5 || diffDiastolic > 5) {
+                trendMessage = '📈 Басым көтөрүлүп жатат!';
+            } else if (diffSystolic < -5 || diffDiastolic < -5) {
+                trendMessage = '📉 Басым түшүп жатат!';
+            }
+            
+            if (trendMessage) {
+                trend = {
+                    message: trendMessage,
+                    diffSystolic: diffSystolic,
+                    diffDiastolic: diffDiastolic
+                };
+            }
+        }
+
         res.json({
             success: true,
-            ai
+            message: "Басым ийгиликтүү кошулду",
+            ai: ai,
+            trend: trend
         });
 
     } catch (e) {
+        console.error('BP error:', e);
         res.status(500).json({
-            error: "BP error"
+            success: false,
+            error: "Басым кошууда ката кетти"
         });
     }
 });
@@ -241,16 +344,29 @@ app.post('/api/backup', async (req, res) => {
 
         res.json({
             success: true,
-            size: stat.size
+            size: stat.size,
+            message: "Резервдик көчүрмө алынды"
         });
 
     } catch (e) {
+        console.error('Backup error:', e);
         res.status(500).json({
-            error: "Backup error"
+            success: false,
+            error: "Резервдөөдө ката кетти"
         });
     }
 });
 
+// ===== ERROR HANDLING MIDDLEWARE =====
+
+app.use((err, req, res, next) => {
+    console.error('Server error:', err);
+    res.status(500).json({
+        success: false,
+        error: "Серверде ката кетти"
+    });
+});
+
 app.listen(PORT, () => {
-    console.log("Server running on port " + PORT);
+    console.log(`🚀 Сервер иштеп жатат: http://localhost:${PORT}`);
 });

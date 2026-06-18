@@ -49,7 +49,8 @@ async function searchPatient() {
                 currentPatient = data.patient;
                 displayPatientInfo(currentPatient);
                 document.getElementById('patientInfo').classList.remove('d-none');
-                showMessage(`Пациент табылды: ${currentPatient.full_name}`, 'success');
+                const name = currentPatient.full_name || currentPatient.fullName || 'Пациент';
+                showMessage(`Пациент табылды: ${name}`, 'success');
             } else {
                 showMessage('Пациент табылган жок. Жаңы пациент кошуңуз.', 'info');
                 document.getElementById('patientInfo').classList.add('d-none');
@@ -82,11 +83,18 @@ async function searchPatient() {
 // ==================== ПАЦИЕНТТИ КӨРСӨТҮҮ ====================
 
 function displayPatientInfo(patient) {
-    document.getElementById('patientName').textContent = patient.full_name || patient.fullName;
-    document.getElementById('patientBirth').textContent = patient.birth_date || patient.birthDate || 'Көрсөтүлө элек';
-    document.getElementById('patientPhone').textContent = patient.phone || 'Көрсөтүлө элек';
-    document.getElementById('patientAddress').textContent = patient.address || 'Көрсөтүлө элек';
-    document.getElementById('patientInn').textContent = patient.inn;
+    // Бул жерде patient.full_name же patient.fullName бар экенин текшеребиз
+    const fullName = patient.full_name || patient.fullName || 'Аты-жөнү жок';
+    const birthDate = patient.birth_date || patient.birthDate || 'Көрсөтүлө элек';
+    const phone = patient.phone || 'Көрсөтүлө элек';
+    const address = patient.address || 'Көрсөтүлө элек';
+    const inn = patient.inn || 'ИНН жок';
+    
+    document.getElementById('patientName').textContent = fullName;
+    document.getElementById('patientBirth').textContent = birthDate;
+    document.getElementById('patientPhone').textContent = phone;
+    document.getElementById('patientAddress').textContent = address;
+    document.getElementById('patientInn').textContent = inn;
 
     // Акыркы басым
     const lastBP = patient.lastBP;
@@ -110,7 +118,7 @@ function displayPatientInfo(patient) {
     // Тренд
     analyzeTrend(patient);
     
-    // AI анализин тазалоо
+    // AI анализин тазалоу
     document.getElementById('aiAnalysis').innerHTML = '';
 }
 
