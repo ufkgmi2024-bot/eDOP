@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ky">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Дарыгердин жардамчысы - PostgreSQL</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --primary: #2563eb;
+            --danger: #dc2626;
+            --warning: #f59e0b;
+            --success: #16a34a;
+        }
+
+        body {
+            background: #f1f5f9;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+
+        .navbar {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            padding: 1rem 0;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+
+        .navbar-brand {
+            font-weight: 700;
+            font-size: 1.5rem;
+            color: white !important;
+        }
+
+        .navbar-brand i {
+            color: #ef4444;
+            margin-right: 10px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+
+        .card {
+            border: none;
+            border-radius: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            transition: all 0.2s;
+        }
+
+        .card:hover {
+            box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+        }
+
+        .search-box {
+            background: white;
+            border-radius: 16px;
+            padding: 0.5rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+
+        .search-box input {
+            border: none;
+            padding: 0.75rem 1rem;
+            font-size: 1.1rem;
+        }
+
+        .search-box input:focus {
+            box-shadow: none;
+            outline: none;
+        }
+
+        .search-box .btn {
+            border-radius: 12px;
+            padding: 0.75rem 2rem;
+            font-weight: 600;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 1rem;
+            border-radius: 12px;
+            text-align: center;
+            border-left: 4px solid var(--primary);
+        }
+
+        .stat-card .number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .stat-card .label {
+            font-size: 0.85rem;
+            color: #64748b;
+            margin-top: 0.25rem;
+        }
+
+        .stat-card.danger { border-left-color: var(--danger); }
+        .stat-card.danger .number { color: var(--danger); }
+        .stat-card.warning { border-left-color: var(--warning); }
+        .stat-card.warning .number { color: var(--warning); }
+        .stat-card.success { border-left-color: var(--success); }
+        .stat-card.success .number { color: var(--success); }
+
+        .badge-status {
+            padding: 0.35rem 0.75rem;
+            border-radius: 20px;
+            font-weight: 500;
+            font-size: 0.85rem;
+        }
+
+        .badge-status.normal { background: #dcfce7; color: #166534; }
+        .badge-status.warning { background: #fef3c7; color: #92400e; }
+        .badge-status.danger { background: #fee2e2; color: #991b1b; }
+
+        .ai-analysis-box {
+            padding: 1rem;
+            border-radius: 12px;
+            margin-top: 1rem;
+        }
+
+        .ai-analysis-box.normal { background: #dcfce7; border-left: 4px solid #16a34a; }
+        .ai-analysis-box.warning { background: #fef3c7; border-left: 4px solid #f59e0b; }
+        .ai-analysis-box.danger { background: #fee2e2; border-left: 4px solid #dc2626; }
+
+        .table-responsive {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .pagination-info {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .loading .spinner {
+            width: 3rem;
+            height: 3rem;
+            border: 4px solid #e2e8f0;
+            border-top: 4px solid var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        #messageBox {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            max-width: 400px;
+            z-index: 9999;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.12);
+        }
+
+        .trend-up { color: #dc2626; }
+        .trend-down { color: #16a34a; }
+        .trend-stable { color: #f59e0b; }
+
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .search-box .btn {
+                width: 100%;
+                margin-top: 0.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Навбар -->
+    <nav class="navbar">
+        <div class="container">
+            <span class="navbar-brand">
+                <i class="bi bi-heart-pulse"></i>
+                Дарыгердин жардамчысы
+            </span>
+            <div class="d-flex align-items-center gap-3">
+                <span class="text-light opacity-75" id="statsInfo">
+                    <i class="bi bi-people"></i> <span id="totalPatients">0</span>
+                </span>
+                <button onclick="createBackup()" class="btn btn-outline-light btn-sm">
+                    <i class="bi bi-cloud-arrow-down"></i> Резерв
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Негизги контент -->
+    <div class="container py-4">
+        <!-- Статистика -->
+        <div class="stats-grid mb-4" id="statsGrid">
+            <div class="stat-card">
+                <div class="number" id="statTotal">0</div>
+                <div class="label">👤 Пациенттер</div>
+            </div>
+            <div class="stat-card warning">
+                <div class="number" id="statWarning">0</div>
+                <div class="label">⚠️ Эскертүү</div>
+            </div>
+            <div class="stat-card danger">
+                <div class="number" id="statDanger">0</div>
+                <div class="label">🚨 Кооптуу</div>
+            </div>
+            <div class="stat-card success">
+                <div class="number" id="statNormal">0</div>
+                <div class="label">✅ Норма</div>
+            </div>
+        </div>
+
+        <!-- Издөө -->
+        <div class="search-box mb-4">
+            <div class="row g-2 align-items-center">
+                <div class="col-md-7">
+                    <div class="input-group">
+                        <span class="input-group-text bg-transparent border-0">
+                            <i class="bi bi-search"></i>
+                        </span>
+                        <input type="text" id="searchInput" class="form-control" 
+                               placeholder="ИНН терүү (14 сан) же аты-жөнү..." 
+                               maxlength="50">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <button onclick="searchPatient()" class="btn btn-primary w-100">
+                        <i class="bi bi-search"></i> Издөө
+                    </button>
+                </div>
+                <div class="col-md-2">
+                    <button onclick="showNewPatientForm()" class="btn btn-success w-100">
+                        <i class="bi bi-plus-circle"></i> Жаңы
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Сообщение -->
+        <div id="messageBox" class="alert d-none" role="alert"></div>
+
+        <!-- Жаңы пациент формасы -->
+        <div id="newPatientForm" class="card p-4 mb-4 d-none">
+            <h5 class="mb-3"><i class="bi bi-person-plus text-success"></i> Жаңы пациент</h5>
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label small">ИНН *</label>
+                    <input type="text" id="newInn" class="form-control" placeholder="14 сан" maxlength="14">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small">Аты-жөнү *</label>
+                    <input type="text" id="newName" class="form-control" placeholder="Иванов Иван Иванович">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small">Туулган күнү</label>
+                    <input type="date" id="newBirth" class="form-control">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small">Телефон</label>
+                    <input type="text" id="newPhone" class="form-control" placeholder="+996700123456">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small">Дареги</label>
+                    <input type="text" id="newAddress" class="form-control" placeholder="Бишкек, ...">
+                </div>
+                <div class="col-12 text-end">
+                    <button onclick="saveNewPatient()" class="btn btn-success">
+                        <i class="bi bi-save"></i> Сактоо
+                    </button>
+                    <button onclick="hideNewPatientForm()" class="btn btn-secondary">Жабуу</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Пациент маалыматы -->
+        <div id="patientInfo" class="d-none">
+            <!-- Пациент карточкасы -->
+            <div class="card p-4 mb-4">
+                <div class="row">
+                    <div class="col-md-8">
+                        <h3 id="patientName" class="text-primary"></h3>
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <p><i class="bi bi-calendar"></i> Т.к.: <span id="patientBirth"></span></p>
+                                <p><i class="bi bi-telephone"></i> Тел.: <span id="patientPhone"></span></p>
+                            </div>
+                            <div class="col-md-6">
+                                <p><i class="bi bi-geo-alt"></i> Дареги: <span id="patientAddress"></span></p>
+                                <p><i class="bi bi-person-vcard"></i> ИНН: <span id="patientInn"></span></p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <div class="p-3 bg-light rounded">
+                            <h6>Акыркы текшерүү</h6>
+                            <div id="lastCheckInfo" class="text-muted">Маалымат жок</div>
+                            <div id="lastCheckStatus" class="mt-2"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Басым кошуу -->
+            <div class="card p-4 mb-4">
+                <h5 class="mb-3"><i class="bi bi-heart"></i> Жаңы басым</h5>
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label small">Жогорку (сист.)</label>
+                        <input type="number" id="systolic" class="form-control" placeholder="120" min="60" max="250">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Төмөнкү (диаст.)</label>
+                        <input type="number" id="diastolic" class="form-control" placeholder="80" min="30" max="150">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">Пульс</label>
+                        <input type="number" id="pulse" class="form-control" placeholder="72" min="30" max="200">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Эскертүү</label>
+                        <input type="text" id="notes" class="form-control" placeholder="Кошумча маалымат">
+                    </div>
+                    <div class="col-md-1 d-flex align-items-end">
+                        <button onclick="addBloodPressure()" class="btn btn-primary w-100">
+                            <i class="bi bi-plus-lg"></i>
+                        </button>
+                    </div>
+                </div>
+                <div id="aiAnalysis" class="mt-3"></div>
+            </div>
+
+            <!-- Басым тарыхы -->
+            <div class="card p-4">
+                <h5 class="mb-3"><i class="bi bi-clock-history"></i> Басым тарыхы</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Дата</th>
+                                <th>Жогорку</th>
+                                <th>Төмөнкү</th>
+                                <th>Пульс</th>
+                                <th>AI анализ</th>
+                                <th>Эскертүү</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyTable">
+                            <tr><td colspan="6" class="text-center text-muted">Маалымат жок</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="trendAnalysis" class="mt-3"></div>
+            </div>
+        </div>
+
+        <!-- Жүктөлүү -->
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Маалыматтар жүктөлүүдө...</p>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
