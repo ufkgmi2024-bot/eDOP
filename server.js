@@ -71,7 +71,6 @@ function getAIAdvice(status, systolic, diastolic, pulse, history) {
         actions: []
     };
 
-    // Кооптуу учур
     if (status === "danger") {
         advice.emergency = "🚨 ШШЭС ТЕЛЕФОНУ: 112\nДароо тез жардам чакырыңыз!";
         advice.immediate = "Дароо врачка кайрылыңыз! Өзүңүздүн басымыңызды түшүрүүгө аракет кылбаңыз.";
@@ -82,9 +81,7 @@ function getAIAdvice(status, systolic, diastolic, pulse, history) {
             "Эч кандай дары бербеңиз!"
         ];
         advice.lifestyle = "Кыймылдабаңыз, толук тынчтык сактаңыз.";
-    } 
-    // Эскертүү учур
-    else if (status === "warning") {
+    } else if (status === "warning") {
         if (systolic >= 140 || diastolic >= 90) {
             advice.immediate = "Басымыңыз жогорулап жатат. Төмөнкү чараларды көрүңүз:";
             advice.actions = [
@@ -104,15 +101,12 @@ function getAIAdvice(status, systolic, diastolic, pulse, history) {
             ];
             advice.lifestyle = "🍎 Күнүнө 5 жолу тамактаныңыз\n💧 Көп суу ичиңиз\n😴 Режимиңизди сактаңыз";
         }
-    } 
-    // Норма
-    else {
+    } else {
         advice.immediate = "Басымыңыз нормада. Саламаттыгыңызды сактаңыз!";
         advice.lifestyle = "✅ Басымыңызды көзөмөлдөп туруңуз\n🥗 Туура тамактаныңыз\n🚶 Активдүү болуңуз";
         advice.actions = ["Басымыңызды күнүнө 1 жолу текшериңиз"];
     }
 
-    // Pulse боюнча кошумча кеңеш
     if (pulse && (pulse > 100 || pulse < 60)) {
         advice.actions.push(pulse > 100 ? 
             "💓 Жүрөк согушу тездеп кеткен, дарыгерге кайрылыңыз" :
@@ -125,16 +119,79 @@ function getAIAdvice(status, systolic, diastolic, pulse, history) {
 
 // ===== NOTIFICATION SYSTEM =====
 
-// Түзүлгөн билдирүүлөрдү сактоо (ар бир пациент үчүн акыркы билдирүү)
 const notificationCache = new Map();
 
-// Telegram билдирүү функциясы
+// SMS.RU (Кыргызстан үчүн)
+// 1. https://sms.ru сайтында катталыңыз
+// 2. API ID алыңыз
+const SMS_API_ID = 'YOUR_SMS_API_ID'; // Өзүңүздүн API ID'ни коюңуз
+
+async function sendSMS(phone, message) {
+    try {
+        // Кыргызстан номерлери үчүн (+996)
+        let cleanPhone = phone.replace(/[^0-9+]/g, '');
+        
+        if (!cleanPhone.startsWith('+')) {
+            if (cleanPhone.startsWith('996')) {
+                cleanPhone = '+' + cleanPhone;
+            } else if (cleanPhone.startsWith('0')) {
+                cleanPhone = '+996' + cleanPhone.substring(1);
+            } else {
+                cleanPhone = '+996' + cleanPhone;
+            }
+        }
+        
+        const url = 'https://sms.ru/sms/send';
+        const params = new URLSearchParams({
+            api_id: SMS_API_ID,
+            to: cleanPhone,
+            msg: message,
+            json: 1
+        });
+
+        const response = await fetch(`${url}?${params}`);
+        const data = await response.json();
+        
+        if (data.status === 'OK') {
+            console.log(`✅ SMS жөнөтүлдү: ${cleanPhone}`);
+            return { success: true };
+        } else {
+            console.error('SMS ката:', data);
+            return { success: false, error: data.status_text };
+        }
+    } catch (error) {
+        console.error('SMS жөнөтүүдө ката:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+async function sendSMSToPatient(phone, patientName, systolic, diastolic, status) {
+    const statusText = status === 'danger' ? 'КООПТУУ!' : 
+                      status === 'warning' ? 'ЭСКЕРТҮҮ' : 'НОРМА';
+    
+    let message = `Саламаттык: ${patientName}\n`;
+    message += `Басым: ${systolic}/${diastolic}\n`;
+    message += `Статус: ${statusText}`;
+    
+    if (status === 'danger') {
+        message += `\n\n🚨 ДАРОО ВРАЧКА КАЙРЫЛЫҢЫЗ!\nТез жардам: 112`;
+    } else if (status === 'warning') {
+        message += `\n\n⚠️ Врачка кайрылыңыз\nКеңеш: дем алуу, тынчтык`;
+    } else {
+        message += `\n\n✅ Басым нормада\nСаламаттыгыңызды сактаңыз`;
+    }
+    
+    if (message.length > 160) {
+        message = message.substring(0, 157) + '...';
+    }
+    
+    return await sendSMS(phone, message);
+}
+
 async function sendTelegramNotification(patientName, status, systolic, diastolic, advice) {
     try {
-        // Telegram бот түзүңүз: @BotFather
-        // TOKEN жана CHAT_ID алыңыз: @userinfobot
-        const TELEGRAM_BOT_TOKEN = 'YOUR_BOT_TOKEN'; // Өзүңүздүн токениңизди коюңуз
-        const TELEGRAM_CHAT_ID = 'YOUR_CHAT_ID'; // Өзүңүздүн ID'ңизди коюңуз
+        const TELEGRAM_BOT_TOKEN = 'YOUR_BOT_TOKEN';
+        const TELEGRAM_CHAT_ID = 'YOUR_CHAT_ID';
         
         let message = `🏥 **Саламаттык билдирүү**\n\n`;
         message += `👤 Пациент: ${patientName}\n`;
@@ -156,7 +213,6 @@ async function sendTelegramNotification(patientName, status, systolic, diastolic
         
         message += `📅 Убакыт: ${new Date().toLocaleString('ky-KG')}`;
 
-        // Telegram аркылуу жөнөтүү
         const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
         const response = await fetch(telegramUrl, {
             method: 'POST',
@@ -169,83 +225,43 @@ async function sendTelegramNotification(patientName, status, systolic, diastolic
         });
 
         const result = await response.json();
-        
-        if (result.ok) {
-            console.log(`✅ Telegram билдирүү жөнөтүлдү: ${patientName}`);
-            return true;
-        } else {
-            console.error('Telegram ката:', result);
-            return false;
-        }
-
+        return result.ok;
     } catch (error) {
-        console.error('Telegram билдирүү жөнөтүүдө ката:', error);
+        console.error('Telegram ката:', error);
         return false;
     }
 }
 
-// SMS билдирүү функциясы (кошумча)
-async function sendSMSNotification(phone, patientName, status, systolic, diastolic) {
-    try {
-        // Бул жерге SMS сервисиңиздин API'сын кошуңуз
-        // Мисалы: SMS.ru, Twilio, ж.б.
-        
-        console.log(`📱 SMS жөнөтүлүүдө: ${phone}`);
-        console.log(`📝 Текст: ${patientName} - Басым ${systolic}/${diastolic} - ${status}`);
-        
-        // SMS сервиси жок болсо, консолго гана чыгарабыз
-        return true;
-        
-        /*
-        // SMS.ru мисалы:
-        const response = await fetch('https://sms.ru/sms/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-                api_id: 'YOUR_SMS_API_ID',
-                to: phone,
-                msg: `Саламаттык: ${patientName}, басым ${systolic}/${diastolic}, ${status === 'danger' ? 'КООПТУУ! Дароо врачка!' : status === 'warning' ? 'ЭСКЕРТҮҮ! Врачка кайрылыңыз!' : 'Норма'}`,
-                json: 1
-            })
-        });
-        const data = await response.json();
-        return data.status === 'OK';
-        */
-        
-    } catch (error) {
-        console.error('SMS жөнөтүүдө ката:', error);
-        return false;
-    }
-}
-
-// Автоматтык билдирүү функциясы
 async function checkAndNotify(patient, record) {
     const status = record.ai_status;
-    
-    // Эгер норма болсо, билдирбейбиз
     if (status === 'normal') return null;
 
     const patientId = patient.inn;
     const now = Date.now();
     const lastNotify = notificationCache.get(patientId) || 0;
-    const oneHour = 60 * 60 * 1000; // 1 саат
+    const oneHour = 60 * 60 * 1000;
 
-    // Эгер акыркы билдирүүдөн 1 саат өтпөсө, кайталабайбыз
     if (now - lastNotify < oneHour) {
-        console.log(`⏳ ${patient.fullName} үчүн билдирүү 1 саат болгон жок, өткөрүп жиберилди`);
+        console.log(`⏳ ${patient.fullName} үчүн 1 саат болгон жок`);
         return null;
     }
 
-    // AI кеңешин алуу
-    const advice = getAIAdvice(
-        status, 
-        record.systolic, 
-        record.diastolic, 
-        record.pulse,
-        patient.history
-    );
+    const advice = getAIAdvice(status, record.systolic, record.diastolic, record.pulse, patient.history);
 
-    // Telegram билдирүү (ар дайым)
+    // SMS жөнөтүү (эгер телефон бар болсо)
+    let smsSent = false;
+    if (patient.phone && SMS_API_ID !== 'YOUR_SMS_API_ID') {
+        const result = await sendSMSToPatient(
+            patient.phone,
+            patient.fullName,
+            record.systolic,
+            record.diastolic,
+            status
+        );
+        smsSent = result.success;
+    }
+
+    // Telegram жөнөтүү
     const telegramSent = await sendTelegramNotification(
         patient.fullName,
         status,
@@ -254,19 +270,7 @@ async function checkAndNotify(patient, record) {
         advice
     );
 
-    // Эгер телефон номери бар болсо, SMS жөнөтүү
-    let smsSent = false;
-    if (patient.phone) {
-        smsSent = await sendSMSNotification(
-            patient.phone,
-            patient.fullName,
-            status,
-            record.systolic,
-            record.diastolic
-        );
-    }
-
-    if (telegramSent || smsSent) {
+    if (smsSent || telegramSent) {
         notificationCache.set(patientId, now);
         console.log(`✅ Билдирүү сакталды: ${patient.fullName}`);
     }
@@ -415,6 +419,8 @@ app.post('/api/patients', async (req, res) => {
             phone: phone || '',
             address: address || '',
             history: [],
+            diseases: [],
+            appointments: [],
             lastBP: null
         };
 
@@ -489,10 +495,8 @@ app.post('/api/blood-pressure', async (req, res) => {
 
         await writeData(data);
 
-        // ===== АВТОМАТТЫК БИЛДИРҮҮ =====
         const advice = await checkAndNotify(patient, record);
 
-        // Трендди текшерүү
         let trend = null;
         if (patient.history.length >= 2) {
             const sorted = [...patient.history].sort((a, b) => 
@@ -535,6 +539,254 @@ app.post('/api/blood-pressure', async (req, res) => {
         res.status(500).json({
             success: false,
             error: "Басым кошууда ката кетти"
+        });
+    }
+});
+
+// ===== DISEASES (ООРУЛАР) =====
+
+// Оору кошуу
+app.post('/api/diseases', async (req, res) => {
+    try {
+        const { inn, name, date, severity, symptoms, treatment, notes } = req.body;
+        
+        if (!inn || !name) {
+            return res.json({
+                success: false,
+                error: "ИНН жана оорунун аты милдеттүү"
+            });
+        }
+
+        const data = await readData();
+        const patientIndex = data.patients.findIndex(p => p.inn === inn);
+
+        if (patientIndex === -1) {
+            return res.json({
+                success: false,
+                error: "Пациент табылган жок"
+            });
+        }
+
+        const disease = {
+            id: Date.now().toString(),
+            name: name,
+            date: date || new Date().toISOString().split('T')[0],
+            severity: severity || 'medium',
+            symptoms: symptoms || '',
+            treatment: treatment || '',
+            notes: notes || '',
+            created_at: new Date().toISOString()
+        };
+
+        if (!data.patients[patientIndex].diseases) {
+            data.patients[patientIndex].diseases = [];
+        }
+
+        data.patients[patientIndex].diseases.push(disease);
+        await writeData(data);
+
+        res.json({
+            success: true,
+            message: "Оору ийгиликтүү кошулду",
+            disease: disease
+        });
+
+    } catch (e) {
+        console.error('Add disease error:', e);
+        res.status(500).json({
+            success: false,
+            error: "Оору кошууда ката кетти"
+        });
+    }
+});
+
+// Ооруларды алуу
+app.get('/api/diseases/:inn', async (req, res) => {
+    try {
+        const data = await readData();
+        const patient = data.patients.find(p => p.inn === req.params.inn);
+
+        if (!patient) {
+            return res.json({
+                success: false,
+                error: "Пациент табылган жок"
+            });
+        }
+
+        res.json({
+            success: true,
+            diseases: patient.diseases || []
+        });
+
+    } catch (e) {
+        console.error('Get diseases error:', e);
+        res.status(500).json({
+            success: false,
+            error: "Ооруларды алууда ката кетти"
+        });
+    }
+});
+
+// Ооруну өчүрүү
+app.delete('/api/diseases/:inn/:id', async (req, res) => {
+    try {
+        const { inn, id } = req.params;
+        const data = await readData();
+        const patientIndex = data.patients.findIndex(p => p.inn === inn);
+
+        if (patientIndex === -1) {
+            return res.json({
+                success: false,
+                error: "Пациент табылган жок"
+            });
+        }
+
+        if (!data.patients[patientIndex].diseases) {
+            return res.json({
+                success: false,
+                error: "Оорулар жок"
+            });
+        }
+
+        data.patients[patientIndex].diseases = data.patients[patientIndex].diseases.filter(d => d.id !== id);
+        await writeData(data);
+
+        res.json({
+            success: true,
+            message: "Оору өчүрүлдү"
+        });
+
+    } catch (e) {
+        console.error('Delete disease error:', e);
+        res.status(500).json({
+            success: false,
+            error: "Оору өчүрүүдө ката кетти"
+        });
+    }
+});
+
+// ===== APPOINTMENTS (КАБЫЛ АЛУУЛАР) =====
+
+// Кабыл алуу кошуу
+app.post('/api/appointments', async (req, res) => {
+    try {
+        const { inn, date, doctor, reason, diagnosis, notes } = req.body;
+        
+        if (!inn || !date) {
+            return res.json({
+                success: false,
+                error: "ИНН жана күнү милдеттүү"
+            });
+        }
+
+        const data = await readData();
+        const patientIndex = data.patients.findIndex(p => p.inn === inn);
+
+        if (patientIndex === -1) {
+            return res.json({
+                success: false,
+                error: "Пациент табылган жок"
+            });
+        }
+
+        const appointment = {
+            id: Date.now().toString(),
+            date: date,
+            doctor: doctor || '',
+            reason: reason || '',
+            diagnosis: diagnosis || '',
+            notes: notes || '',
+            created_at: new Date().toISOString()
+        };
+
+        if (!data.patients[patientIndex].appointments) {
+            data.patients[patientIndex].appointments = [];
+        }
+
+        data.patients[patientIndex].appointments.push(appointment);
+        await writeData(data);
+
+        res.json({
+            success: true,
+            message: "Кабыл алуу ийгиликтүү кошулду",
+            appointment: appointment
+        });
+
+    } catch (e) {
+        console.error('Add appointment error:', e);
+        res.status(500).json({
+            success: false,
+            error: "Кабыл алуу кошууда ката кетти"
+        });
+    }
+});
+
+// Кабыл алууларды алуу
+app.get('/api/appointments/:inn', async (req, res) => {
+    try {
+        const data = await readData();
+        const patient = data.patients.find(p => p.inn === req.params.inn);
+
+        if (!patient) {
+            return res.json({
+                success: false,
+                error: "Пациент табылган жок"
+            });
+        }
+
+        // Дата боюнча сорттоо (эң жаңысы биринчи)
+        const appointments = (patient.appointments || []).sort((a, b) => 
+            new Date(b.date) - new Date(a.date)
+        );
+
+        res.json({
+            success: true,
+            appointments: appointments
+        });
+
+    } catch (e) {
+        console.error('Get appointments error:', e);
+        res.status(500).json({
+            success: false,
+            error: "Кабыл алууларды алууда ката кетти"
+        });
+    }
+});
+
+// Кабыл алууну өчүрүү
+app.delete('/api/appointments/:inn/:id', async (req, res) => {
+    try {
+        const { inn, id } = req.params;
+        const data = await readData();
+        const patientIndex = data.patients.findIndex(p => p.inn === inn);
+
+        if (patientIndex === -1) {
+            return res.json({
+                success: false,
+                error: "Пациент табылган жок"
+            });
+        }
+
+        if (!data.patients[patientIndex].appointments) {
+            return res.json({
+                success: false,
+                error: "Кабыл алуулар жок"
+            });
+        }
+
+        data.patients[patientIndex].appointments = data.patients[patientIndex].appointments.filter(a => a.id !== id);
+        await writeData(data);
+
+        res.json({
+            success: true,
+            message: "Кабыл алуу өчүрүлдү"
+        });
+
+    } catch (e) {
+        console.error('Delete appointment error:', e);
+        res.status(500).json({
+            success: false,
+            error: "Кабыл алуу өчүрүүдө ката кетти"
         });
     }
 });
