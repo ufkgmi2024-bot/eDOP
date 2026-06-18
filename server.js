@@ -1,447 +1,256 @@
 const express = require('express');
-const { Pool } = require('pg');
-const cors = require('cors');
+const fs = require('fs').promises;
 const path = require('path');
-require('dotenv').config();
+const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const DATA_FILE = path.join(__dirname, 'data', 'patients.json');
+const BACKUP_DIR = path.join(__dirname, 'backup');
 
-// ========== PostgreSQL КОШУЛУУ ==========
-const pool = new Pool({
-    user: process.env.DB_USER || 'postgres',
-    host: process.env.DB_HOST || 'localhost',
-    database: process.env.DB_NAME || 'doctor_helper',
-    password: process.env.DB_PASSWORD || '123456',
-    port: process.env.DB_PORT || 5432,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-});
-
-// ========== MIDDLEWARE ==========
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(__dirname));
 
-// ========== ДАТАБАЗАНЫ ТҮЗҮҮ ==========
-async function initDatabase() {
+async function ensureDataFile() {
     try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS patients (
-                inn VARCHAR(14) PRIMARY KEY,
-                full_name VARCHAR(200) NOT NULL,
-                birth_date DATE,
-                phone VARCHAR(20),
-                address TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS blood_pressure (
-                id SERIAL PRIMARY KEY,
-                patient_inn VARCHAR(14) REFERENCES patients(inn) ON DELETE CASCADE,
-                systolic INTEGER NOT NULL CHECK (systolic BETWEEN 30 AND 300),
-                diastolic INTEGER NOT NULL CHECK (diastolic BETWEEN 20 AND 200),
-                pulse INTEGER CHECK (pulse BETWEEN 20 AND 250),
-                notes TEXT,
-                ai_status VARCHAR(20) DEFAULT 'normal',
-                check_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS diseases (
-                id SERIAL PRIMARY KEY,
-                patient_inn VARCHAR(14) REFERENCES patients(inn) ON DELETE CASCADE,
-                disease_name VARCHAR(200) NOT NULL,
-                diagnosis_date DATE,
-                severity VARCHAR(20) DEFAULT 'medium',
-                symptoms TEXT,
-                treatment TEXT,
-                notes TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS appointments (
-                id SERIAL PRIMARY KEY,
-                patient_inn VARCHAR(14) REFERENCES patients(inn) ON DELETE CASCADE,
-                appointment_date TIMESTAMP NOT NULL,
-                doctor_name VARCHAR(200),
-                reason TEXT,
-                diagnosis TEXT,
-                notes TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_bp_patient ON blood_pressure(patient_inn, check_date DESC);
-            CREATE INDEX IF NOT EXISTS idx_disease_patient ON diseases(patient_inn);
-            CREATE INDEX IF NOT EXISTS idx_appointment_patient ON appointments(patient_inn, appointment_date DESC);
-        `);
-
-        console.log('✅ База ийгиликтүү түзүлдү');
-    } catch (error) {
-        console.error('❌ Базаны түзүүдө ката:', error.message);
-        process.exit(1);
+        await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
+        await fs.access(DATA_FILE);
+    } catch {
+        await fs.writeFile(DATA_FILE, JSON.stringify({ patients: [] }, null, 2));
     }
 }
 
-// ========== AI АНАЛИЗ ФУНКЦИЯСЫ ==========
-function analyzeBP(systolic, diastolic, pulse) {
-    let status = 'normal';
-    let message = '✅ Басым нормада.';
-    let recommendations = [];
-
-    if (systolic >= 180 || diastolic >= 120) {
-        status = 'danger';
-        message = '🚨 ӨТӨ КООПТУУ! Дароо тез жардам чалыңыз!';
-        recommendations.push('Дароо 103 же 112 чалыңыз');
-        recommendations.push('Пациентти отургузуп, тынчтандырыңыз');
-    } else if (systolic >= 140 || diastolic >= 90) {
-        status = 'warning';
-        message = '⚠️ Басым жогорулап жатат. Врачка кайрылыңыз.';
-        recommendations.push('Дарыгерге кайрылыңыз');
-        recommendations.push('Тузду азайтыңыз');
-    } else if (systolic < 90 || diastolic < 60) {
-        status = 'warning';
-        message = '⚠️ Басым төмөн. Врачка кайрылыңыз.';
-        recommendations.push('Көбүрөөк суу ичиңиз');
-        recommendations.push('Дарыгерге кайрылыңыз');
-    }
-
-    if (pulse) {
-        if (pulse > 100) recommendations.push('Пульс тез (тахикардия)');
-        else if (pulse < 60) recommendations.push('Пульс жай (брадикардия)');
-    }
-
-    return { status, message, recommendations };
+async function readData() {
+    await ensureDataFile();
+    const raw = await fs.readFile(DATA_FILE, 'utf8');
+    return JSON.parse(raw);
 }
 
-// ========== СТАТИСТИКА ==========
+async function writeData(data) {
+    await fs.writeFile(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+// ===== AI ANALYSIS =====
+
+function analyzeBP(sys, dia) {
+    if (sys >= 180 || dia >= 120) {
+        return {
+            status: "danger",
+            message: "🚨 Өтө кооптуу басым! Дароо врачка кайрылыңыз."
+        };
+    }
+
+    if (sys >= 140 || dia >= 90) {
+        return {
+            status: "warning",
+            message: "⚠️ Басым жогорулап жатат."
+        };
+    }
+
+    return {
+        status: "normal",
+        message: "✅ Басым нормада."
+    };
+}
+
+// ===== STATS =====
+
 app.get('/api/stats', async (req, res) => {
     try {
-        const result = await pool.query(`
-            SELECT 
-                COUNT(*) as total_patients,
-                SUM(CASE WHEN bp.ai_status = 'danger' THEN 1 ELSE 0 END) as critical_count,
-                SUM(CASE WHEN bp.ai_status = 'warning' THEN 1 ELSE 0 END) as warning_count,
-                SUM(CASE WHEN bp.ai_status = 'normal' THEN 1 ELSE 0 END) as normal_count
-            FROM patients p
-            LEFT JOIN LATERAL (
-                SELECT ai_status FROM blood_pressure 
-                WHERE patient_inn = p.inn 
-                ORDER BY check_date DESC LIMIT 1
-            ) bp ON true
-        `);
+        const data = await readData();
+        let warning = 0;
+        let danger = 0;
+        let normal = 0;
+
+        data.patients.forEach(p => {
+            if (p.lastBP) {
+                if (p.lastBP.status === 'danger') danger++;
+                else if (p.lastBP.status === 'warning') warning++;
+                else normal++;
+            }
+        });
 
         res.json({
             success: true,
-            stats: result.rows[0] || {
-                total_patients: 0,
-                critical_count: 0,
-                warning_count: 0,
-                normal_count: 0
+            stats: {
+                total_patients: data.patients.length,
+                warning_count: warning,
+                critical_count: danger,
+                normal_count: normal
             }
         });
-    } catch (error) {
-        console.error('Stats error:', error);
-        res.status(500).json({ success: false, error: error.message });
+
+    } catch (e) {
+        res.status(500).json({ error: "Stats error" });
     }
 });
 
-// ========== ПАЦИЕНТ ИЗДӨӨ ==========
+// ===== SEARCH PATIENT =====
+
 app.get('/api/patients/search/:inn', async (req, res) => {
-    try {
-        const { inn } = req.params;
-        
-        const patientResult = await pool.query(
-            'SELECT * FROM patients WHERE inn = $1',
-            [inn]
-        );
+    const data = await readData();
+    const patient = data.patients.find(p => p.inn === req.params.inn);
 
-        if (patientResult.rows.length === 0) {
-            return res.json({ success: false, message: 'Пациент табылган жок' });
-        }
-
-        const patient = patientResult.rows[0];
-
-        // Басым тарыхы
-        const bpResult = await pool.query(
-            'SELECT * FROM blood_pressure WHERE patient_inn = $1 ORDER BY check_date DESC LIMIT 10',
-            [inn]
-        );
-
-        // Оорулар
-        const diseaseResult = await pool.query(
-            'SELECT * FROM diseases WHERE patient_inn = $1 ORDER BY diagnosis_date DESC',
-            [inn]
-        );
-
-        // Акыркы басым
-        const lastBP = bpResult.rows[0] || null;
-
-        res.json({
-            success: true,
-            patient: {
-                inn: patient.inn,
-                full_name: patient.full_name,
-                birth_date: patient.birth_date,
-                phone: patient.phone,
-                address: patient.address,
-                history: bpResult.rows.map(row => ({
-                    check_date: row.check_date,
-                    systolic: row.systolic,
-                    diastolic: row.diastolic,
-                    pulse: row.pulse,
-                    notes: row.notes,
-                    ai_status: row.ai_status
-                })),
-                diseases: diseaseResult.rows,
-                lastBP: lastBP ? {
-                    systolic: lastBP.systolic,
-                    diastolic: lastBP.diastolic,
-                    pulse: lastBP.pulse,
-                    date: lastBP.check_date,
-                    status: lastBP.ai_status
-                } : null
-            }
-        });
-    } catch (error) {
-        console.error('Search error:', error);
-        res.status(500).json({ success: false, error: error.message });
+    if (!patient) {
+        return res.json({ success: false });
     }
+
+    res.json({
+        success: true,
+        patient
+    });
 });
 
-// ========== ПАЦИЕНТТЕРДИ ИЗДӨӨ (ЖАЛПЫ) ==========
+// ===== GENERAL SEARCH =====
+
 app.get('/api/patients', async (req, res) => {
-    try {
-        const { search, page = 1, limit = 50 } = req.query;
-        const offset = (page - 1) * limit;
+    const data = await readData();
+    const search = req.query.search;
 
-        let query = 'SELECT * FROM patients';
-        let params = [];
-        let countQuery = 'SELECT COUNT(*) FROM patients';
-
-        if (search) {
-            query += ' WHERE full_name ILIKE $1 OR inn LIKE $1';
-            countQuery += ' WHERE full_name ILIKE $1 OR inn LIKE $1';
-            params.push(`%${search}%`);
-        }
-
-        query += ' ORDER BY full_name LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2);
-        params.push(limit, offset);
-
-        const [result, countResult] = await Promise.all([
-            pool.query(query, params),
-            pool.query(countQuery, params.slice(0, params.length - 2))
-        ]);
-
-        res.json({
-            success: true,
-            patients: result.rows,
-            pagination: {
-                total: parseInt(countResult.rows[0].count),
-                page: parseInt(page),
-                limit: parseInt(limit)
-            }
-        });
-    } catch (error) {
-        console.error('Search error:', error);
-        res.status(500).json({ success: false, error: error.message });
+    if (!search) {
+        return res.json(data);
     }
+
+    const found = data.patients.filter(p =>
+        p.fullName?.toLowerCase().includes(search.toLowerCase()) ||
+        p.inn.includes(search)
+    );
+
+    res.json({
+        success: true,
+        patients: found,
+        pagination: {
+            total: found.length
+        }
+    });
 });
 
-// ========== ЖАҢЫ ПАЦИЕНТ ==========
+// ===== NEW PATIENT =====
+
 app.post('/api/patients', async (req, res) => {
     try {
-        const { inn, full_name, birth_date, phone, address } = req.body;
+        const { inn, fullName, birthDate, phone, address } = req.body;
+        const data = await readData();
 
-        // Текшерүү
-        const check = await pool.query('SELECT inn FROM patients WHERE inn = $1', [inn]);
-        if (check.rows.length > 0) {
-            return res.json({ success: false, error: 'Мындай ИНН менен пациент бар' });
+        const exists = data.patients.find(p => p.inn === inn);
+
+        if (exists) {
+            return res.json({
+                success: false,
+                error: "Мындай пациент бар"
+            });
         }
 
-        await pool.query(
-            `INSERT INTO patients (inn, full_name, birth_date, phone, address) 
-             VALUES ($1, $2, $3, $4, $5)`,
-            [inn, full_name, birth_date, phone, address]
-        );
+        const patient = {
+            inn,
+            fullName,
+            birthDate,
+            phone,
+            address,
+            history: [],
+            lastBP: null
+        };
 
-        res.json({ success: true, message: 'Пациент кошулду' });
-    } catch (error) {
-        console.error('Add patient error:', error);
-        res.status(500).json({ success: false, error: error.message });
+        data.patients.push(patient);
+        await writeData(data);
+
+        res.json({
+            success: true
+        });
+
+    } catch (e) {
+        res.status(500).json({
+            error: "Сактоо катасы"
+        });
     }
 });
 
-// ========== БАСЫМ КОШУУ ==========
+// ===== ADD BLOOD PRESSURE =====
+
 app.post('/api/blood-pressure', async (req, res) => {
     try {
         const { inn, systolic, diastolic, pulse, notes } = req.body;
+        const data = await readData();
 
-        // Пациентти текшерүү
-        const patientCheck = await pool.query('SELECT inn FROM patients WHERE inn = $1', [inn]);
-        if (patientCheck.rows.length === 0) {
-            return res.json({ success: false, error: 'Пациент табылган жок' });
+        const patient = data.patients.find(p => p.inn === inn);
+
+        if (!patient) {
+            return res.json({
+                success: false,
+                error: "Пациент жок"
+            });
         }
 
-        const ai = analyzeBP(systolic, diastolic, pulse);
+        const ai = analyzeBP(systolic, diastolic);
 
-        await pool.query(
-            `INSERT INTO blood_pressure (patient_inn, systolic, diastolic, pulse, notes, ai_status) 
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [inn, systolic, diastolic, pulse, notes, ai.status]
-        );
+        const record = {
+            check_date: new Date().toISOString(),
+            systolic,
+            diastolic,
+            pulse,
+            notes,
+            ai_status: ai.status
+        };
 
-        // Трендди текшерүү
-        const trendResult = await pool.query(
-            `SELECT systolic, diastolic, check_date FROM blood_pressure 
-             WHERE patient_inn = $1 ORDER BY check_date DESC LIMIT 2`,
-            [inn]
-        );
+        if (!patient.history) patient.history = [];
 
-        let trend = null;
-        if (trendResult.rows.length === 2) {
-            const [current, previous] = trendResult.rows;
-            const diffSystolic = current.systolic - previous.systolic;
-            const diffDiastolic = current.diastolic - previous.diastolic;
-            
-            if (Math.abs(diffSystolic) > 10 || Math.abs(diffDiastolic) > 10) {
-                trend = {
-                    direction: diffSystolic > 0 ? 'up' : 'down',
-                    message: diffSystolic > 0 ? '📈 Басым көтөрүлүп жатат' : '📉 Басым түшүп жатат',
-                    diff: `${diffSystolic > 0 ? '+' : ''}${diffSystolic}/${diffDiastolic > 0 ? '+' : ''}${diffDiastolic}`
-                };
-            }
-        }
+        patient.history.push(record);
+
+        patient.lastBP = {
+            systolic,
+            diastolic,
+            pulse,
+            date: new Date().toISOString(),
+            status: ai.status
+        };
+
+        await writeData(data);
 
         res.json({
             success: true,
-            ai,
-            trend,
-            message: 'Басым кошулду'
+            ai
         });
-    } catch (error) {
-        console.error('BP error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
 
-// ========== ООРУ КОШУУ ==========
-app.post('/api/diseases', async (req, res) => {
-    try {
-        const { inn, disease_name, diagnosis_date, severity, symptoms, treatment, notes } = req.body;
-
-        const patientCheck = await pool.query('SELECT inn FROM patients WHERE inn = $1', [inn]);
-        if (patientCheck.rows.length === 0) {
-            return res.json({ success: false, error: 'Пациент табылган жок' });
-        }
-
-        await pool.query(
-            `INSERT INTO diseases (patient_inn, disease_name, diagnosis_date, severity, symptoms, treatment, notes) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [inn, disease_name, diagnosis_date, severity, symptoms, treatment, notes]
-        );
-
-        res.json({ success: true, message: 'Оору кошулду' });
-    } catch (error) {
-        console.error('Disease error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// ========== КАБЫЛ АЛУУ КОШУУ ==========
-app.post('/api/appointments', async (req, res) => {
-    try {
-        const { inn, appointment_date, doctor_name, reason, diagnosis, notes } = req.body;
-
-        const patientCheck = await pool.query('SELECT inn FROM patients WHERE inn = $1', [inn]);
-        if (patientCheck.rows.length === 0) {
-            return res.json({ success: false, error: 'Пациент табылган жок' });
-        }
-
-        await pool.query(
-            `INSERT INTO appointments (patient_inn, appointment_date, doctor_name, reason, diagnosis, notes) 
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [inn, appointment_date, doctor_name, reason, diagnosis, notes]
-        );
-
-        res.json({ success: true, message: 'Кабыл алуу кошулду' });
-    } catch (error) {
-        console.error('Appointment error:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// ========== БАРДЫК ПАЦИЕНТТЕР (ЭКСПОРТ) ==========
-app.get('/api/patients/all', async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT 
-                p.*,
-                COUNT(DISTINCT bp.id) as bp_count,
-                COUNT(DISTINCT d.id) as disease_count,
-                MAX(bp.check_date) as last_check
-            FROM patients p
-            LEFT JOIN blood_pressure bp ON p.inn = bp.patient_inn
-            LEFT JOIN diseases d ON p.inn = d.patient_inn
-            GROUP BY p.inn
-            ORDER BY p.full_name
-        `);
-
-        res.json({
-            success: true,
-            patients: result.rows
+    } catch (e) {
+        res.status(500).json({
+            error: "BP error"
         });
-    } catch (error) {
-        console.error('All patients error:', error);
-        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// ========== РЕЗЕРВДИК КӨЧҮРМӨ ==========
+// ===== BACKUP =====
+
 app.post('/api/backup', async (req, res) => {
     try {
-        const backupDir = path.join(__dirname, 'backup');
-        await fs.mkdir(backupDir, { recursive: true });
+        await fs.mkdir(BACKUP_DIR, { recursive: true });
 
-        const result = await pool.query(`
-            SELECT 
-                p.*,
-                json_agg(DISTINCT bp.*) as blood_pressure,
-                json_agg(DISTINCT d.*) as diseases,
-                json_agg(DISTINCT a.*) as appointments
-            FROM patients p
-            LEFT JOIN blood_pressure bp ON p.inn = bp.patient_inn
-            LEFT JOIN diseases d ON p.inn = d.patient_inn
-            LEFT JOIN appointments a ON p.inn = a.patient_inn
-            GROUP BY p.inn
-        `);
+        const backupFile = path.join(
+            BACKUP_DIR,
+            `backup-${Date.now()}.json`
+        );
 
-        const backupFile = path.join(backupDir, `backup-${Date.now()}.json`);
-        await fs.writeFile(backupFile, JSON.stringify(result.rows, null, 2));
+        const data = await readData();
+
+        await fs.writeFile(
+            backupFile,
+            JSON.stringify(data, null, 2)
+        );
 
         const stat = await fs.stat(backupFile);
 
         res.json({
             success: true,
-            size: stat.size,
-            count: result.rows.length,
-            file: path.basename(backupFile)
+            size: stat.size
         });
-    } catch (error) {
-        console.error('Backup error:', error);
-        res.status(500).json({ success: false, error: error.message });
+
+    } catch (e) {
+        res.status(500).json({
+            error: "Backup error"
+        });
     }
 });
 
-// ========== СЕРВЕРДИ ИШКЕ КИРГИЗҮҮ ==========
-async function startServer() {
-    await initDatabase();
-    
-    app.listen(PORT, () => {
-        console.log(`🚀 Сервер иштеп жатат: http://localhost:${PORT}`);
-        console.log(`📊 PostgreSQL базасы: ${process.env.DB_NAME || 'doctor_helper'}`);
-    });
-}
-
-startServer().catch(console.error);
+app.listen(PORT, () => {
+    console.log("Server running on port " + PORT);
+});
