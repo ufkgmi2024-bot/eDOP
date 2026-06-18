@@ -61,6 +61,219 @@ function analyzeBP(sys, dia) {
     };
 }
 
+// ===== AI ADVICE =====
+
+function getAIAdvice(status, systolic, diastolic, pulse, history) {
+    let advice = {
+        immediate: '',
+        lifestyle: '',
+        emergency: '',
+        actions: []
+    };
+
+    // Кооптуу учур
+    if (status === "danger") {
+        advice.emergency = "🚨 ШШЭС ТЕЛЕФОНУ: 112\nДароо тез жардам чакырыңыз!";
+        advice.immediate = "Дароо врачка кайрылыңыз! Өзүңүздүн басымыңызды түшүрүүгө аракет кылбаңыз.";
+        advice.actions = [
+            "Тез жардам чакырыңыз (112)",
+            "Пациентти жаткырып, башын көтөрүңүз",
+            "Тыныгууну камсыз кылыңыз",
+            "Эч кандай дары бербеңиз!"
+        ];
+        advice.lifestyle = "Кыймылдабаңыз, толук тынчтык сактаңыз.";
+    } 
+    // Эскертүү учур
+    else if (status === "warning") {
+        if (systolic >= 140 || diastolic >= 90) {
+            advice.immediate = "Басымыңыз жогорулап жатат. Төмөнкү чараларды көрүңүз:";
+            advice.actions = [
+                "Дем алуу көнүгүүлөрүн жасаңыз",
+                "Стресстен алыс болуңуз",
+                "Дарыгерге кайрылыңыз",
+                "Басымыңызды күнүнө 2 жолу текшериңиз"
+            ];
+            advice.lifestyle = "🥗 Диетаңызды тузсуз кармаңыз\n🚶 Ар күнү 30 мүнөт басыңыз\n💧 Көп суу ичиңиз (1.5-2л)\n😴 7-8 саат уктаңыз";
+        } else if (systolic <= 90 || diastolic <= 60) {
+            advice.immediate = "Басымыңыз төмөндөп жатат. Төмөнкү чараларды көрүңүз:";
+            advice.actions = [
+                "Кофе же чай ичиңиз",
+                "Жатып алыңыз",
+                "Аяк-буттарыңызды көтөрүп коюңуз",
+                "Шекерленген нерсе жеңиз"
+            ];
+            advice.lifestyle = "🍎 Күнүнө 5 жолу тамактаныңыз\n💧 Көп суу ичиңиз\n😴 Режимиңизди сактаңыз";
+        }
+    } 
+    // Норма
+    else {
+        advice.immediate = "Басымыңыз нормада. Саламаттыгыңызды сактаңыз!";
+        advice.lifestyle = "✅ Басымыңызды көзөмөлдөп туруңуз\n🥗 Туура тамактаныңыз\n🚶 Активдүү болуңуз";
+        advice.actions = ["Басымыңызды күнүнө 1 жолу текшериңиз"];
+    }
+
+    // Pulse боюнча кошумча кеңеш
+    if (pulse && (pulse > 100 || pulse < 60)) {
+        advice.actions.push(pulse > 100 ? 
+            "💓 Жүрөк согушу тездеп кеткен, дарыгерге кайрылыңыз" :
+            "💓 Жүрөк согушу жайлап калган, текшерилиңиз"
+        );
+    }
+
+    return advice;
+}
+
+// ===== NOTIFICATION SYSTEM =====
+
+// Түзүлгөн билдирүүлөрдү сактоо (ар бир пациент үчүн акыркы билдирүү)
+const notificationCache = new Map();
+
+// Telegram билдирүү функциясы
+async function sendTelegramNotification(patientName, status, systolic, diastolic, advice) {
+    try {
+        // Telegram бот түзүңүз: @BotFather
+        // TOKEN жана CHAT_ID алыңыз: @userinfobot
+        const TELEGRAM_BOT_TOKEN = 'YOUR_BOT_TOKEN'; // Өзүңүздүн токениңизди коюңуз
+        const TELEGRAM_CHAT_ID = 'YOUR_CHAT_ID'; // Өзүңүздүн ID'ңизди коюңуз
+        
+        let message = `🏥 **Саламаттык билдирүү**\n\n`;
+        message += `👤 Пациент: ${patientName}\n`;
+        message += `🩸 Басым: ${systolic}/${diastolic}\n`;
+        message += `📊 Статус: ${status === 'danger' ? '🚨 КООПТУУ!' : status === 'warning' ? '⚠️ ЭСКЕРТҮҮ' : '✅ Норма'}\n\n`;
+        message += `📋 Кеңеш:\n${advice.immediate}\n\n`;
+        
+        if (advice.actions && advice.actions.length > 0) {
+            message += `🔹 Кылуу керек:\n${advice.actions.map(a => `• ${a}`).join('\n')}\n\n`;
+        }
+        
+        if (advice.lifestyle) {
+            message += `💡 Сунуштар:\n${advice.lifestyle}\n\n`;
+        }
+        
+        if (advice.emergency) {
+            message += `🆘 ${advice.emergency}\n\n`;
+        }
+        
+        message += `📅 Убакыт: ${new Date().toLocaleString('ky-KG')}`;
+
+        // Telegram аркылуу жөнөтүү
+        const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+        const response = await fetch(telegramUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: TELEGRAM_CHAT_ID,
+                text: message,
+                parse_mode: 'Markdown'
+            })
+        });
+
+        const result = await response.json();
+        
+        if (result.ok) {
+            console.log(`✅ Telegram билдирүү жөнөтүлдү: ${patientName}`);
+            return true;
+        } else {
+            console.error('Telegram ката:', result);
+            return false;
+        }
+
+    } catch (error) {
+        console.error('Telegram билдирүү жөнөтүүдө ката:', error);
+        return false;
+    }
+}
+
+// SMS билдирүү функциясы (кошумча)
+async function sendSMSNotification(phone, patientName, status, systolic, diastolic) {
+    try {
+        // Бул жерге SMS сервисиңиздин API'сын кошуңуз
+        // Мисалы: SMS.ru, Twilio, ж.б.
+        
+        console.log(`📱 SMS жөнөтүлүүдө: ${phone}`);
+        console.log(`📝 Текст: ${patientName} - Басым ${systolic}/${diastolic} - ${status}`);
+        
+        // SMS сервиси жок болсо, консолго гана чыгарабыз
+        return true;
+        
+        /*
+        // SMS.ru мисалы:
+        const response = await fetch('https://sms.ru/sms/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                api_id: 'YOUR_SMS_API_ID',
+                to: phone,
+                msg: `Саламаттык: ${patientName}, басым ${systolic}/${diastolic}, ${status === 'danger' ? 'КООПТУУ! Дароо врачка!' : status === 'warning' ? 'ЭСКЕРТҮҮ! Врачка кайрылыңыз!' : 'Норма'}`,
+                json: 1
+            })
+        });
+        const data = await response.json();
+        return data.status === 'OK';
+        */
+        
+    } catch (error) {
+        console.error('SMS жөнөтүүдө ката:', error);
+        return false;
+    }
+}
+
+// Автоматтык билдирүү функциясы
+async function checkAndNotify(patient, record) {
+    const status = record.ai_status;
+    
+    // Эгер норма болсо, билдирбейбиз
+    if (status === 'normal') return null;
+
+    const patientId = patient.inn;
+    const now = Date.now();
+    const lastNotify = notificationCache.get(patientId) || 0;
+    const oneHour = 60 * 60 * 1000; // 1 саат
+
+    // Эгер акыркы билдирүүдөн 1 саат өтпөсө, кайталабайбыз
+    if (now - lastNotify < oneHour) {
+        console.log(`⏳ ${patient.fullName} үчүн билдирүү 1 саат болгон жок, өткөрүп жиберилди`);
+        return null;
+    }
+
+    // AI кеңешин алуу
+    const advice = getAIAdvice(
+        status, 
+        record.systolic, 
+        record.diastolic, 
+        record.pulse,
+        patient.history
+    );
+
+    // Telegram билдирүү (ар дайым)
+    const telegramSent = await sendTelegramNotification(
+        patient.fullName,
+        status,
+        record.systolic,
+        record.diastolic,
+        advice
+    );
+
+    // Эгер телефон номери бар болсо, SMS жөнөтүү
+    let smsSent = false;
+    if (patient.phone) {
+        smsSent = await sendSMSNotification(
+            patient.phone,
+            patient.fullName,
+            status,
+            record.systolic,
+            record.diastolic
+        );
+    }
+
+    if (telegramSent || smsSent) {
+        notificationCache.set(patientId, now);
+        console.log(`✅ Билдирүү сакталды: ${patient.fullName}`);
+    }
+
+    return advice;
+}
+
 // ===== STATS =====
 
 app.get('/api/stats', async (req, res) => {
@@ -196,9 +409,9 @@ app.post('/api/patients', async (req, res) => {
         const patient = {
             inn,
             fullName: fullName,
-            full_name: fullName, // Клиент тараптагы совместимость үчүн
+            full_name: fullName,
             birthDate: birthDate || '',
-            birth_date: birthDate || '', // Клиент тараптагы совместимость үчүн
+            birth_date: birthDate || '',
             phone: phone || '',
             address: address || '',
             history: [],
@@ -276,6 +489,9 @@ app.post('/api/blood-pressure', async (req, res) => {
 
         await writeData(data);
 
+        // ===== АВТОМАТТЫК БИЛДИРҮҮ =====
+        const advice = await checkAndNotify(patient, record);
+
         // Трендди текшерүү
         let trend = null;
         if (patient.history.length >= 2) {
@@ -310,7 +526,8 @@ app.post('/api/blood-pressure', async (req, res) => {
             success: true,
             message: "Басым ийгиликтүү кошулду",
             ai: ai,
-            trend: trend
+            trend: trend,
+            advice: advice
         });
 
     } catch (e) {

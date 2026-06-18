@@ -73,6 +73,7 @@
             text-align: center;
             border-left: 4px solid var(--primary);
             transition: all 0.3s;
+            cursor: default;
         }
 
         .stat-card:hover {
@@ -191,7 +192,54 @@
 
         .ai-analysis-box.normal { background: #dcfce7; border-left: 4px solid #16a34a; }
         .ai-analysis-box.warning { background: #fef3c7; border-left: 4px solid #f59e0b; }
-        .ai-analysis-box.danger { background: #fee2e2; border-left: 4px solid #dc2626; }
+        .ai-analysis-box.danger { background: #fee2e2; border-left: 4px solid #dc2626; animation: blink 1s infinite; }
+
+        /* AI кеңеш стилдери */
+        .ai-advice-box {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+            border-left: 4px solid #007bff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .ai-advice-box ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+
+        .ai-advice-box ul li {
+            margin: 5px 0;
+            padding: 3px 0;
+        }
+
+        .ai-advice-box .emergency {
+            color: #dc3545;
+            font-weight: bold;
+            background: #ffe6e6;
+            padding: 10px;
+            border-radius: 5px;
+            border: 2px solid #dc3545;
+            margin: 10px 0;
+        }
+
+        .emergency-alert {
+            background: #dc3545;
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 10px;
+            font-weight: bold;
+            animation: blink 1s infinite;
+            text-align: center;
+        }
+
+        @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
 
         .trend-up { color: #dc2626; }
         .trend-down { color: #16a34a; }
@@ -222,9 +270,24 @@
             border-radius: 0 8px 8px 0;
         }
 
-        .disease-item .severity-high { color: var(--danger); }
-        .disease-item .severity-medium { color: var(--warning); }
-        .disease-item .severity-low { color: var(--success); }
+        .disease-item .severity-high { color: var(--danger); font-weight: bold; }
+        .disease-item .severity-medium { color: var(--warning); font-weight: bold; }
+        .disease-item .severity-low { color: var(--success); font-weight: bold; }
+
+        .appointment-item {
+            border-left: 4px solid var(--primary);
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.5rem;
+            background: #f8fafc;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .appointment-item .date { color: var(--primary); font-weight: 600; }
+        .appointment-item .doctor { color: #64748b; }
+
+        #aiAdviceContainer {
+            margin-top: 10px;
+        }
 
         @media (max-width: 768px) {
             .stats-grid {
@@ -423,6 +486,7 @@
                             </div>
                         </div>
                         <div id="aiAnalysis" class="mt-3"></div>
+                        <div id="aiAdviceContainer"></div>
                     </div>
 
                     <div class="card p-4">
