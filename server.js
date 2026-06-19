@@ -13,7 +13,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_key';
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static('public'));
+// Static files - бардык статикалык файлдарды көрсөтүү
+app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ==================== ФАЙЛДЫК ОПЕРАЦИЯЛАР ====================
 
@@ -789,7 +791,7 @@ app.get('/api/audit', authMiddleware, roleMiddleware(['admin']), async (req, res
 
 // ==================== HTML БЕТТЕР (ROUTER) ====================
 
-// Башкы бет - login.html
+// Башкы бет - login.html (index.html болбосо)
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
@@ -811,7 +813,15 @@ app.get('/doctor', (req, res) => {
 
 // ==================== 404 КАТАСЫ ====================
 app.use((req, res) => {
-    res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
+    // 404 бетин көрсөтүү (жок болсо JSON кайтарат)
+    try {
+        res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
+    } catch (error) {
+        res.status(404).json({ 
+            error: 'Барак табылган жок',
+            message: 'Сиз издеген барак жок же өчүрүлгөн'
+        });
+    }
 });
 
 // ==================== СЕРВЕРДИ ИШКЕ КОШУУ ====================
@@ -825,6 +835,7 @@ app.listen(PORT, async () => {
     console.log(`👨‍⚕️ Демо врач: doctor / doctor123`);
     console.log('='.repeat(50));
     console.log('📋 Жеткиликтүү баракчалар:');
+    console.log(`   🏠 Башкы бет: http://localhost:${PORT}/`);
     console.log(`   🔐 Кирүү: http://localhost:${PORT}/login`);
     console.log(`   👨‍💼 Админ: http://localhost:${PORT}/admin`);
     console.log(`   👨‍⚕️ Врач: http://localhost:${PORT}/doctor`);
