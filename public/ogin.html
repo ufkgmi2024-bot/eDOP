@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ky">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Дарыгердин жардамчысы - Кирүү</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        .login-card {
+            background: white;
+            border-radius: 24px;
+            padding: 2.5rem;
+            max-width: 420px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .login-header i {
+            font-size: 3rem;
+            color: #667eea;
+            background: #f0f0ff;
+            padding: 1rem;
+            border-radius: 50%;
+        }
+        .login-header h2 {
+            margin-top: 1rem;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+        .login-header p {
+            color: #6c757d;
+            font-size: 0.9rem;
+        }
+        .form-control {
+            border-radius: 12px;
+            padding: 0.75rem 1rem;
+            border: 2px solid #e9ecef;
+            transition: all 0.3s;
+        }
+        .form-control:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        }
+        .btn-login {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 12px;
+            padding: 0.75rem;
+            font-weight: 600;
+            color: white;
+            width: 100%;
+            transition: all 0.3s;
+        }
+        .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        }
+        .error-message {
+            color: #dc2626;
+            font-size: 0.9rem;
+            margin-top: 0.5rem;
+            display: none;
+        }
+        .demo-info {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 1rem;
+            margin-top: 1.5rem;
+            font-size: 0.85rem;
+            color: #6c757d;
+        }
+        .demo-info strong {
+            color: #1a1a2e;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="login-header">
+            <i class="bi bi-heart-pulse"></i>
+            <h2>Дарыгердин жардамчысы</h2>
+            <p>Системага кирүү</p>
+        </div>
+
+        <form id="loginForm">
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Логин</label>
+                <div class="input-group">
+                    <span class="input-group-text bg-transparent border-0">
+                        <i class="bi bi-person"></i>
+                    </span>
+                    <input type="text" id="username" class="form-control" placeholder="Логиниңизди териңиз" required>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Купуя сөз</label>
+                <div class="input-group">
+                    <span class="input-group-text bg-transparent border-0">
+                        <i class="bi bi-lock"></i>
+                    </span>
+                    <input type="password" id="password" class="form-control" placeholder="Купуя сөзүңүздү териңиз" required>
+                    <button type="button" class="btn btn-outline-secondary" onclick="togglePassword()">
+                        <i class="bi bi-eye" id="eyeIcon"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div id="errorMessage" class="error-message">
+                <i class="bi bi-exclamation-triangle"></i>
+                <span id="errorText">Ката кетти</span>
+            </div>
+
+            <button type="submit" class="btn-login mt-2">
+                <i class="bi bi-box-arrow-in-right"></i> Кирүү
+            </button>
+        </form>
+
+        <div class="demo-info">
+            <p class="mb-1"><strong>👤 Демо аккаунттар:</strong></p>
+            <p class="mb-0">Админ: <strong>admin</strong> / <strong>admin123</strong></p>
+            <p class="mb-0">Врач: <strong>doctor</strong> / <strong>doctor123</strong></p>
+        </div>
+    </div>
+
+    <script>
+        function togglePassword() {
+            const password = document.getElementById('password');
+            const eye = document.getElementById('eyeIcon');
+            if (password.type === 'password') {
+                password.type = 'text';
+                eye.className = 'bi bi-eye-slash';
+            } else {
+                password.type = 'password';
+                eye.className = 'bi bi-eye';
+            }
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errorDiv = document.getElementById('errorMessage');
+            const errorText = document.getElementById('errorText');
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('user', JSON.stringify(data.user));
+                    
+                    if (data.user.role === 'admin') {
+                        window.location.href = '/admin.html';
+                    } else {
+                        window.location.href = '/doctor.html';
+                    }
+                } else {
+                    errorDiv.style.display = 'block';
+                    errorText.textContent = data.error || 'Кирүү мүмкүн болбой калды';
+                }
+            } catch (error) {
+                errorDiv.style.display = 'block';
+                errorText.textContent = 'Сервер менен байланыш жок!';
+            }
+        });
+
+        // Автоматтык түрдө киргизүү (демо үчүн)
+        document.getElementById('username').value = 'admin';
+        document.getElementById('password').value = 'admin123';
+    </script>
+</body>
+</html>

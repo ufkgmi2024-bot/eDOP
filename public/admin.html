@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="ky">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Администратор панели</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --primary: #2563eb;
+            --success: #16a34a;
+            --warning: #f59e0b;
+            --danger: #dc2626;
+        }
+        body {
+            background: #f1f5f9;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        .sidebar {
+            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+            min-height: 100vh;
+            padding: 1.5rem 0;
+            position: sticky;
+            top: 0;
+        }
+        .sidebar .brand {
+            color: white;
+            font-size: 1.3rem;
+            font-weight: 700;
+            padding: 0 1.5rem 2rem;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .sidebar .brand i {
+            color: #ef4444;
+        }
+        .sidebar .nav-link {
+            color: rgba(255,255,255,0.7);
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            margin: 0.25rem 0.5rem;
+            transition: all 0.3s;
+        }
+        .sidebar .nav-link:hover {
+            background: rgba(255,255,255,0.1);
+            color: white;
+        }
+        .sidebar .nav-link.active {
+            background: rgba(255,255,255,0.15);
+            color: white;
+        }
+        .sidebar .nav-link i {
+            margin-right: 10px;
+            width: 20px;
+        }
+        .main-content {
+            padding: 2rem;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 16px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            transition: all 0.3s;
+        }
+        .stat-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+        }
+        .stat-card .number {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+        .stat-card .label {
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+        .stat-card .icon {
+            font-size: 2rem;
+            opacity: 0.3;
+        }
+        .table-card {
+            background: white;
+            border-radius: 16px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .badge-status {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-weight: 500;
+            font-size: 0.8rem;
+        }
+        .badge-status.normal { background: #dcfce7; color: #166534; }
+        .badge-status.warning { background: #fef3c7; color: #92400e; }
+        .badge-status.danger { background: #fee2e2; color: #991b1b; }
+        .badge-status.active { background: #dbeafe; color: #1e40af; }
+        .badge-status.inactive { background: #f1f5f9; color: #64748b; }
+        .modal-content {
+            border-radius: 16px;
+            border: none;
+        }
+        .modal-header {
+            border-bottom: none;
+            padding: 1.5rem 1.5rem 0;
+        }
+        .modal-body {
+            padding: 1.5rem;
+        }
+        .modal-footer {
+            border-top: none;
+            padding: 0 1.5rem 1.5rem;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 2rem;
+        }
+        .spinner {
+            width: 3rem;
+            height: 3rem;
+            border: 4px solid #e2e8f0;
+            border-top: 4px solid var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 1rem;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        @media (max-width: 768px) {
+            .sidebar {
+                min-height: auto;
+                padding: 1rem;
+            }
+            .main-content {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-3 col-lg-2 sidebar">
+                <div class="brand">
+                    <i class="bi bi-heart-pulse"></i> Admin
+                </div>
+                <nav class="nav flex-column">
+                    <a href="#" class="nav-link active" data-tab="dashboard">
+                        <i class="bi bi-grid"></i> Башкы бет
+                    </a>
+                    <a href="#" class="nav-link" data-tab="doctors">
+                        <i class="bi bi-person-badge"></i> Врачтар
+                    </a>
+                    <a href="#" class="nav-link" data-tab="audit">
+                        <i class="bi bi-clock-history"></i> Аудитория
+                    </a>
+                    <a href="#" class="nav-link" data-tab="backup">
+                        <i class="bi bi-cloud-arrow-down"></i> Резерв
+                    </a>
+                    <a href="#" class="nav-link" data-tab="logout">
+                        <i class="bi bi-box-arrow-right"></i> Чыгуу
+                    </a>
+                </nav>
+            </div>
+
+            <!-- Main Content -->
+            <div class="col-md-9 col-lg-10 main-content">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h4 id="pageTitle">Башкы бет</h4>
+                    <span class="text-muted" id="userInfo">
+                        <i class="bi bi-person-circle"></i> <span id="adminName">Админ</span>
+                    </span>
+                </div>
+
+                <!-- Loading -->
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <p>Маалыматтар жүктөлүүдө...</p>
+                </div>
+
+                <!-- Dashboard Tab -->
+                <div id="tab-dashboard">
+                    <!-- Stats -->
+                    <div class="row g-3 mb-4" id="statsGrid">
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="d-flex justify-content-between">
+                                    <div>
+                                        <div class="number" id="statDoctors">0</div>
+                                        <div class="label">👨‍⚕️ Врачтар</div>
+                                    </div>
+                                    <div class="icon">👨‍⚕️</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="d-flex justify-content-between">
+                                    <div>
+                                        <div class="number" id="statPatients">0</div>
+                                        <div class="label">👤 Пациенттер</div>
+                                    </div>
+                                    <div class="icon">👤</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="d-flex justify-content-between">
+                                    <div>
+                                        <div class="number" id="statVisits">0</div>
+                                        <div class="label">📋 Текшерүүлөр</div>
+                                    </div>
+                                    <div class="icon">📋</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="d-flex justify-content-between">
+                                    <div>
+                                        <div class="number" id="statDanger">0</div>
+                                        <div class="label">🚨 Кооптуу</div>
+                                    </div>
+                                    <div class="icon">🚨</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Doctor Stats Table -->
+                    <div class="table-card">
+                        <h5 class="mb-3"><i class="bi bi-bar-chart"></i> Врачтардын статистикасы</h5>
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Врач</th>
+                                        <th>Адистиги</th>
+                                        <th>Пациенттер</th>
+                                        <th>Текшерүүлөр</th>
+                                        <th>Акыркы активдүүлүк</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="doctorStatsTable">
+                                    <tr><td colspan="5" class="text-center text-muted">Маалымат жок</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Doctors Tab -->
+                <div id="tab-doctors" style="display:none;">
+                    <div class="d-flex justify-content-between mb-3">
+                        <h5>Врачтарды башкаруу</h5>
+                        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addDoctorModal">
+                            <i class="bi bi-plus-circle"></i> Жаңы врач
+                        </button>
+                    </div>
+                    <div class="table-card">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Аты-жөнү</th>
+                                        <th>Логин</th>
+                                        <th>Адистиги</th>
+                                        <th>Кабинет</th>
+                                        <th>Статус</th>
+                                        <th>Аракеттер</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="doctorsTable">
+                                    <tr><td colspan="6" class="text-center text-muted">Маалымат жок</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Audit Tab -->
+                <div id="tab-audit" style="display:none;">
+                    <div class="table-card">
+                        <h5 class="mb-3"><i class="bi bi-clock-history"></i> Аудитория журналы</h5>
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Убакыт</th>
+                                        <th>Колдонуучу</th>
+                                        <th>Аракет</th>
+                                        <th>Толук маалымат</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="auditTable">
+                                    <tr><td colspan="4" class="text-center text-muted">Журнал бош</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Backup Tab -->
+                <div id="tab-backup" style="display:none;">
+                    <div class="table-card text-center" style="padding: 3rem;">
+                        <i class="bi bi-cloud-arrow-down" style="font-size: 4rem; color: #2563eb;"></i>
+                        <h5 class="mt-3">Резервдик көчүрмө</h5>
+                        <p class="text-muted">Бардык маалыматтарды резервдик көчүрмөгө алуу</p>
+                        <button class="btn btn-primary btn-lg" onclick="createBackup()">
+                            <i class="bi bi-cloud-arrow-down"></i> Көчүрмө алуу
+                        </button>
+                        <div id="backupResult" class="mt-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Doctor Modal -->
+    <div class="modal fade" id="addDoctorModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-person-plus"></i> Жаңы врач кошуу</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addDoctorForm">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Аты-жөнү *</label>
+                                <input type="text" id="docFullName" class="form-control" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Логин *</label>
+                                <input type="text" id="docUsername" class="form-control" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Купуя сөз *</label>
+                                <input type="password" id="docPassword" class="form-control" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Адистиги</label>
+                                <input type="text" id="docSpecialty" class="form-control" placeholder="Мис: Терапевт">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Телефон</label>
+                                <input type="text" id="docPhone" class="form-control" placeholder="+996700123456">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Email</label>
+                                <input type="email" id="docEmail" class="form-control" placeholder="doctor@clinic.kg">
+                            </div>
+                            <div class="col-md-12">
+                                <label class="form-label">Кабинет</label>
+                                <input type="text" id="docCabinet" class="form-control" placeholder="Кабинет №101">
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Жабуу</button>
+                    <button type="button" class="btn btn-primary" onclick="saveDoctor()">
+                        <i class="bi bi-save"></i> Сактоо
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="admin.js"></script>
+</body>
+</html>

@@ -2,840 +2,781 @@ const express = require('express');
 const fs = require('fs').promises;
 const path = require('path');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, 'data', 'patients.json');
-const BACKUP_DIR = path.join(__dirname, 'backup');
+const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_key';
 
+// Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static(__dirname));
+app.use(express.static('public'));
 
-async function ensureDataFile() {
+// ==================== ФАЙЛДЫК ОПЕРАЦИЯЛАР ====================
+
+const DATA_DIR = path.join(__dirname, 'data');
+const BACKUP_DIR = path.join(__dirname, 'backup');
+
+async function ensureDataDir() {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.mkdir(BACKUP_DIR, { recursive: true });
+}
+
+async function readFile(filename) {
+    const filePath = path.join(DATA_DIR, filename);
     try {
-        await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
-        await fs.access(DATA_FILE);
-    } catch {
-        await fs.writeFile(DATA_FILE, JSON.stringify({ patients: [] }, null, 2));
+        await ensureDataDir();
+        const data = await fs.readFile(filePath, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        // Эгер файл жок болсо, бош объект кайтарат
+        return {};
     }
 }
 
-async function readData() {
-    await ensureDataFile();
-    const raw = await fs.readFile(DATA_FILE, 'utf8');
-    return JSON.parse(raw);
+async function writeFile(filename, data) {
+    const filePath = path.join(DATA_DIR, filename);
+    await ensureDataDir();
+    await fs.writeFile(filePath, JSON.stringify(data, null, 2));
 }
 
-async function writeData(data) {
-    await fs.writeFile(DATA_FILE, JSON.stringify(data, null, 2));
+function generateId(prefix) {
+    return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
 }
 
-// ===== AI ANALYSIS =====
-
-function analyzeBP(sys, dia) {
-    if (sys >= 180 || dia >= 120) {
-        return {
-            status: "danger",
-            message: "🚨 Өтө кооптуу басым! Дароо врачка кайрылыңыз."
+// Баштапкы маалыматтарды түзүү
+async function initializeData() {
+    // Users
+    let users = await readFile('users.json');
+    if (!users.users) {
+        const hashedPassword = await bcrypt.hash('admin123', 10);
+        users = {
+            users: [
+                {
+                    id: 'admin_001',
+                    username: 'admin',
+                    password: hashedPassword,
+                    fullName: 'Система Администратору',
+                    role: 'admin',
+                    phone: '+996700111111',
+                    email: 'admin@clinic.kg',
+                    isActive: true,
+                    createdAt: new Date().toISOString(),
+                    lastLogin: null
+                }
+            ]
         };
+        await writeFile('users.json', users);
     }
 
-    if (sys >= 140 || dia >= 90) {
-        return {
-            status: "warning",
-            message: "⚠️ Басым жогорулап жатат. Врачка кайрылыңыз."
-        };
+    // Patients
+    let patients = await readFile('patients.json');
+    if (!patients.patients) {
+        patients = { patients: [] };
+        await writeFile('patients.json', patients);
     }
 
-    if (sys <= 90 || dia <= 60) {
-        return {
-            status: "warning",
-            message: "⚠️ Басым төмөндөп жатат. Врачка кайрылыңыз."
-        };
+    // Visits
+    let visits = await readFile('visits.json');
+    if (!visits.visits) {
+        visits = { visits: [] };
+        await writeFile('visits.json', visits);
     }
 
+    // Audit
+    let audit = await readFile('audit.json');
+    if (!audit.logs) {
+        audit = { logs: [] };
+        await writeFile('audit.json', audit);
+    }
+}
+
+// ==================== ЖАРДАМЧЫ ФУНКЦИЯЛАР ====================
+
+function calculateAverageBP(visits) {
+    if (!visits || visits.length === 0) {
+        return { systolic: 0, diastolic: 0 };
+    }
+    const totalSystolic = visits.reduce((sum, v) => sum + (v.systolic || 0), 0);
+    const totalDiastolic = visits.reduce((sum, v) => sum + (v.diastolic || 0), 0);
     return {
-        status: "normal",
-        message: "✅ Басым нормада."
+        systolic: Math.round(totalSystolic / visits.length),
+        diastolic: Math.round(totalDiastolic / visits.length)
     };
 }
 
-// ===== AI ADVICE =====
-
-function getAIAdvice(status, systolic, diastolic, pulse, history) {
-    let advice = {
-        immediate: '',
-        lifestyle: '',
-        emergency: '',
-        actions: []
+function getAIStatus(systolic, diastolic) {
+    if (systolic >= 180 || diastolic >= 120) {
+        return {
+            riskLevel: 'danger',
+            message: '🚨 Өтө кооптуу басым! Дароо врачка кайрылыңыз.'
+        };
+    }
+    if (systolic >= 140 || diastolic >= 90) {
+        return {
+            riskLevel: 'warning',
+            message: '⚠️ Басым жогорулап жатат. Врачка кайрылыңыз.'
+        };
+    }
+    return {
+        riskLevel: 'normal',
+        message: '✅ Басым нормада. Мыкты!'
     };
-
-    if (status === "danger") {
-        advice.emergency = "🚨 ШШЭС ТЕЛЕФОНУ: 112\nДароо тез жардам чакырыңыз!";
-        advice.immediate = "Дароо врачка кайрылыңыз! Өзүңүздүн басымыңызды түшүрүүгө аракет кылбаңыз.";
-        advice.actions = [
-            "Тез жардам чакырыңыз (112)",
-            "Пациентти жаткырып, башын көтөрүңүз",
-            "Тыныгууну камсыз кылыңыз",
-            "Эч кандай дары бербеңиз!"
-        ];
-        advice.lifestyle = "Кыймылдабаңыз, толук тынчтык сактаңыз.";
-    } else if (status === "warning") {
-        if (systolic >= 140 || diastolic >= 90) {
-            advice.immediate = "Басымыңыз жогорулап жатат. Төмөнкү чараларды көрүңүз:";
-            advice.actions = [
-                "Дем алуу көнүгүүлөрүн жасаңыз",
-                "Стресстен алыс болуңуз",
-                "Дарыгерге кайрылыңыз",
-                "Басымыңызды күнүнө 2 жолу текшериңиз"
-            ];
-            advice.lifestyle = "🥗 Диетаңызды тузсуз кармаңыз\n🚶 Ар күнү 30 мүнөт басыңыз\n💧 Көп суу ичиңиз (1.5-2л)\n😴 7-8 саат уктаңыз";
-        } else if (systolic <= 90 || diastolic <= 60) {
-            advice.immediate = "Басымыңыз төмөндөп жатат. Төмөнкү чараларды көрүңүз:";
-            advice.actions = [
-                "Кофе же чай ичиңиз",
-                "Жатып алыңыз",
-                "Аяк-буттарыңызды көтөрүп коюңуз",
-                "Шекерленген нерсе жеңиз"
-            ];
-            advice.lifestyle = "🍎 Күнүнө 5 жолу тамактаныңыз\n💧 Көп суу ичиңиз\n😴 Режимиңизди сактаңыз";
-        }
-    } else {
-        advice.immediate = "Басымыңыз нормада. Саламаттыгыңызды сактаңыз!";
-        advice.lifestyle = "✅ Басымыңызды көзөмөлдөп туруңуз\n🥗 Туура тамактаныңыз\n🚶 Активдүү болуңуз";
-        advice.actions = ["Басымыңызды күнүнө 1 жолу текшериңиз"];
-    }
-
-    if (pulse && (pulse > 100 || pulse < 60)) {
-        advice.actions.push(pulse > 100 ? 
-            "💓 Жүрөк согушу тездеп кеткен, дарыгерге кайрылыңыз" :
-            "💓 Жүрөк согушу жайлап калган, текшерилиңиз"
-        );
-    }
-
-    return advice;
 }
 
-// ===== NOTIFICATION SYSTEM =====
+// ==================== АУТЕНТИФИКАЦИЯ ====================
 
-const notificationCache = new Map();
+// JWT текшерүү middleware
+function authMiddleware(req, res, next) {
+    const token = req.headers['authorization']?.split(' ')[1];
+    
+    if (!token) {
+        return res.status(401).json({ error: 'Кирүү талап кылынат' });
+    }
 
-// SMS.RU (Кыргызстан үчүн)
-// 1. https://sms.ru сайтында катталыңыз
-// 2. API ID алыңыз
-const SMS_API_ID = 'YOUR_SMS_API_ID'; // Өзүңүздүн API ID'ни коюңуз
-
-async function sendSMS(phone, message) {
     try {
-        // Кыргызстан номерлери үчүн (+996)
-        let cleanPhone = phone.replace(/[^0-9+]/g, '');
-        
-        if (!cleanPhone.startsWith('+')) {
-            if (cleanPhone.startsWith('996')) {
-                cleanPhone = '+' + cleanPhone;
-            } else if (cleanPhone.startsWith('0')) {
-                cleanPhone = '+996' + cleanPhone.substring(1);
-            } else {
-                cleanPhone = '+996' + cleanPhone;
-            }
-        }
-        
-        const url = 'https://sms.ru/sms/send';
-        const params = new URLSearchParams({
-            api_id: SMS_API_ID,
-            to: cleanPhone,
-            msg: message,
-            json: 1
-        });
-
-        const response = await fetch(`${url}?${params}`);
-        const data = await response.json();
-        
-        if (data.status === 'OK') {
-            console.log(`✅ SMS жөнөтүлдү: ${cleanPhone}`);
-            return { success: true };
-        } else {
-            console.error('SMS ката:', data);
-            return { success: false, error: data.status_text };
-        }
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
+        next();
     } catch (error) {
-        console.error('SMS жөнөтүүдө ката:', error);
-        return { success: false, error: error.message };
+        return res.status(401).json({ error: 'Жараксыз токен' });
     }
 }
 
-async function sendSMSToPatient(phone, patientName, systolic, diastolic, status) {
-    const statusText = status === 'danger' ? 'КООПТУУ!' : 
-                      status === 'warning' ? 'ЭСКЕРТҮҮ' : 'НОРМА';
-    
-    let message = `Саламаттык: ${patientName}\n`;
-    message += `Басым: ${systolic}/${diastolic}\n`;
-    message += `Статус: ${statusText}`;
-    
-    if (status === 'danger') {
-        message += `\n\n🚨 ДАРОО ВРАЧКА КАЙРЫЛЫҢЫЗ!\nТез жардам: 112`;
-    } else if (status === 'warning') {
-        message += `\n\n⚠️ Врачка кайрылыңыз\nКеңеш: дем алуу, тынчтык`;
-    } else {
-        message += `\n\n✅ Басым нормада\nСаламаттыгыңызды сактаңыз`;
-    }
-    
-    if (message.length > 160) {
-        message = message.substring(0, 157) + '...';
-    }
-    
-    return await sendSMS(phone, message);
+// Ролду текшерүү middleware
+function roleMiddleware(roles) {
+    return (req, res, next) => {
+        if (!req.user || !roles.includes(req.user.role)) {
+            return res.status(403).json({ error: 'Уруксат жок' });
+        }
+        next();
+    };
 }
 
-async function sendTelegramNotification(patientName, status, systolic, diastolic, advice) {
+// ==================== API РОУТЕРЛЕР ====================
+
+// === АУТЕНТИФИКАЦИЯ ===
+app.post('/api/auth/login', async (req, res) => {
     try {
-        const TELEGRAM_BOT_TOKEN = 'YOUR_BOT_TOKEN';
-        const TELEGRAM_CHAT_ID = 'YOUR_CHAT_ID';
+        const { username, password } = req.body;
+        const users = await readFile('users.json');
         
-        let message = `🏥 **Саламаттык билдирүү**\n\n`;
-        message += `👤 Пациент: ${patientName}\n`;
-        message += `🩸 Басым: ${systolic}/${diastolic}\n`;
-        message += `📊 Статус: ${status === 'danger' ? '🚨 КООПТУУ!' : status === 'warning' ? '⚠️ ЭСКЕРТҮҮ' : '✅ Норма'}\n\n`;
-        message += `📋 Кеңеш:\n${advice.immediate}\n\n`;
+        const user = users.users?.find(u => u.username === username && u.isActive !== false);
         
-        if (advice.actions && advice.actions.length > 0) {
-            message += `🔹 Кылуу керек:\n${advice.actions.map(a => `• ${a}`).join('\n')}\n\n`;
+        if (!user) {
+            return res.status(401).json({ error: 'Колдонуучу табылган жок' });
         }
+
+        const isValid = await bcrypt.compare(password, user.password);
         
-        if (advice.lifestyle) {
-            message += `💡 Сунуштар:\n${advice.lifestyle}\n\n`;
+        if (!isValid) {
+            return res.status(401).json({ error: 'Купуя сөз туура эмес' });
         }
-        
-        if (advice.emergency) {
-            message += `🆘 ${advice.emergency}\n\n`;
-        }
-        
-        message += `📅 Убакыт: ${new Date().toLocaleString('ky-KG')}`;
 
-        const telegramUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-        const response = await fetch(telegramUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chat_id: TELEGRAM_CHAT_ID,
-                text: message,
-                parse_mode: 'Markdown'
-            })
-        });
+        // Акыркы кирүү убактысын жаңыртуу
+        user.lastLogin = new Date().toISOString();
+        await writeFile('users.json', users);
 
-        const result = await response.json();
-        return result.ok;
-    } catch (error) {
-        console.error('Telegram ката:', error);
-        return false;
-    }
-}
-
-async function checkAndNotify(patient, record) {
-    const status = record.ai_status;
-    if (status === 'normal') return null;
-
-    const patientId = patient.inn;
-    const now = Date.now();
-    const lastNotify = notificationCache.get(patientId) || 0;
-    const oneHour = 60 * 60 * 1000;
-
-    if (now - lastNotify < oneHour) {
-        console.log(`⏳ ${patient.fullName} үчүн 1 саат болгон жок`);
-        return null;
-    }
-
-    const advice = getAIAdvice(status, record.systolic, record.diastolic, record.pulse, patient.history);
-
-    // SMS жөнөтүү (эгер телефон бар болсо)
-    let smsSent = false;
-    if (patient.phone && SMS_API_ID !== 'YOUR_SMS_API_ID') {
-        const result = await sendSMSToPatient(
-            patient.phone,
-            patient.fullName,
-            record.systolic,
-            record.diastolic,
-            status
+        // JWT түзүү
+        const token = jwt.sign(
+            { id: user.id, username: user.username, role: user.role },
+            JWT_SECRET,
+            { expiresIn: '24h' }
         );
-        smsSent = result.success;
-    }
 
-    // Telegram жөнөтүү
-    const telegramSent = await sendTelegramNotification(
-        patient.fullName,
-        status,
-        record.systolic,
-        record.diastolic,
-        advice
-    );
-
-    if (smsSent || telegramSent) {
-        notificationCache.set(patientId, now);
-        console.log(`✅ Билдирүү сакталды: ${patient.fullName}`);
-    }
-
-    return advice;
-}
-
-// ===== STATS =====
-
-app.get('/api/stats', async (req, res) => {
-    try {
-        const data = await readData();
-        let warning = 0;
-        let danger = 0;
-        let normal = 0;
-
-        data.patients.forEach(p => {
-            if (p.lastBP) {
-                if (p.lastBP.status === 'danger') danger++;
-                else if (p.lastBP.status === 'warning') warning++;
-                else normal++;
-            }
+        // Аудитория журналы
+        const audit = await readFile('audit.json');
+        if (!audit.logs) audit.logs = [];
+        audit.logs.push({
+            id: generateId('log'),
+            userId: user.id,
+            action: 'login',
+            details: `${user.fullName} кирди`,
+            ip: req.ip || '127.0.0.1',
+            createdAt: new Date().toISOString()
         });
+        await writeFile('audit.json', audit);
+
+        // Купуя сөздү жок кылып жөнөтүү
+        delete user.password;
+
+        res.json({
+            success: true,
+            token,
+            user
+        });
+
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({ error: 'Сервер катасы' });
+    }
+});
+
+// === АДМИНИСТРАТОР: Врачтарды башкаруу ===
+app.post('/api/admin/doctors', authMiddleware, roleMiddleware(['admin']), async (req, res) => {
+    try {
+        const { username, password, fullName, specialty, phone, email, cabinet } = req.body;
+
+        if (!username || !password || !fullName) {
+            return res.status(400).json({ error: 'Логин, купуя сөз жана аты-жөнү милдеттүү' });
+        }
+
+        const users = await readFile('users.json');
+        if (!users.users) users.users = [];
+
+        // Уникалдуулукту текшерүү
+        if (users.users.find(u => u.username === username)) {
+            return res.status(400).json({ error: 'Бул логин бар' });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        const newDoctor = {
+            id: generateId('doc'),
+            username,
+            password: hashedPassword,
+            fullName,
+            role: 'doctor',
+            specialty: specialty || 'Жалпы врач',
+            phone: phone || '',
+            email: email || '',
+            cabinet: cabinet || 'Кабинет белгилене элек',
+            isActive: true,
+            createdAt: new Date().toISOString(),
+            lastLogin: null
+        };
+
+        users.users.push(newDoctor);
+        await writeFile('users.json', users);
+
+        // Аудитория
+        const audit = await readFile('audit.json');
+        if (!audit.logs) audit.logs = [];
+        audit.logs.push({
+            id: generateId('log'),
+            userId: req.user.id,
+            action: 'create_doctor',
+            details: `Жаңы врач кошулду: ${fullName} (${username})`,
+            ip: req.ip || '127.0.0.1',
+            createdAt: new Date().toISOString()
+        });
+        await writeFile('audit.json', audit);
+
+        delete newDoctor.password;
+        res.json({ success: true, doctor: newDoctor });
+
+    } catch (error) {
+        console.error('Create doctor error:', error);
+        res.status(500).json({ error: 'Врач кошууда ката' });
+    }
+});
+
+// Админ: Врачтардын тизмесин алуу
+app.get('/api/admin/doctors', authMiddleware, roleMiddleware(['admin']), async (req, res) => {
+    try {
+        const users = await readFile('users.json');
+        const doctors = users.users?.filter(u => u.role === 'doctor') || [];
+        
+        // Ар бир врачтын статистикасын эсептөө
+        const visits = await readFile('visits.json');
+        const patients = await readFile('patients.json');
+
+        const doctorsWithStats = doctors.map(doc => {
+            const docVisits = visits.visits?.filter(v => v.doctorId === doc.id) || [];
+            const docPatients = patients.patients?.filter(p => p.createdBy === doc.id) || [];
+            
+            // Акыркы активдүүлүк
+            const lastVisit = docVisits.length > 0 
+                ? docVisits.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0]
+                : null;
+
+            // Купуя сөздү жок кылуу
+            const { password, ...docWithoutPassword } = doc;
+
+            return {
+                ...docWithoutPassword,
+                stats: {
+                    totalVisits: docVisits.length,
+                    totalPatients: docPatients.length,
+                    lastActivity: lastVisit?.createdAt || doc.lastLogin || 'Активдүү эмес'
+                }
+            };
+        });
+
+        res.json({ success: true, doctors: doctorsWithStats });
+
+    } catch (error) {
+        console.error('Get doctors error:', error);
+        res.status(500).json({ error: 'Врачтарды алууда ката' });
+    }
+});
+
+// Админ: Врачты өчүрүү
+app.delete('/api/admin/doctors/:id', authMiddleware, roleMiddleware(['admin']), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const users = await readFile('users.json');
+        
+        const index = users.users?.findIndex(u => u.id === id && u.role === 'doctor');
+        if (index === -1 || index === undefined) {
+            return res.status(404).json({ error: 'Врач табылган жок' });
+        }
+
+        const deleted = users.users[index];
+        users.users.splice(index, 1);
+        await writeFile('users.json', users);
+
+        // Аудитория
+        const audit = await readFile('audit.json');
+        if (!audit.logs) audit.logs = [];
+        audit.logs.push({
+            id: generateId('log'),
+            userId: req.user.id,
+            action: 'delete_doctor',
+            details: `Врач өчүрүлдү: ${deleted.fullName}`,
+            ip: req.ip || '127.0.0.1',
+            createdAt: new Date().toISOString()
+        });
+        await writeFile('audit.json', audit);
+
+        res.json({ success: true, message: 'Врач өчүрүлдү' });
+
+    } catch (error) {
+        console.error('Delete doctor error:', error);
+        res.status(500).json({ error: 'Врачты өчүрүүдө ката' });
+    }
+});
+
+// === АДМИН: Жалпы статистика ===
+app.get('/api/admin/stats', authMiddleware, roleMiddleware(['admin']), async (req, res) => {
+    try {
+        const users = await readFile('users.json');
+        const patients = await readFile('patients.json');
+        const visits = await readFile('visits.json');
+
+        const totalDoctors = users.users?.filter(u => u.role === 'doctor').length || 0;
+        const totalPatients = patients.patients?.length || 0;
+        const totalVisits = visits.visits?.length || 0;
+
+        // Ар бир врачтын статистикасы
+        const doctorStats = users.users
+            ?.filter(u => u.role === 'doctor')
+            .map(doc => {
+                const docVisits = visits.visits?.filter(v => v.doctorId === doc.id) || [];
+                const docPatients = patients.patients?.filter(p => p.createdBy === doc.id) || [];
+                return {
+                    doctorId: doc.id,
+                    doctorName: doc.fullName,
+                    specialty: doc.specialty,
+                    totalVisits: docVisits.length,
+                    totalPatients: docPatients.length,
+                    lastVisit: docVisits.length > 0 
+                        ? docVisits.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0]?.createdAt
+                        : null
+                };
+            }) || [];
+
+        // Статистика AI
+        const aiStats = visits.visits?.reduce((acc, v) => {
+            const key = v.aiRiskLevel || 'unknown';
+            acc[key] = (acc[key] || 0) + 1;
+            return acc;
+        }, {}) || {};
+
+        // Күндүк статистика
+        const dailyStats = visits.visits?.reduce((acc, v) => {
+            const date = new Date(v.createdAt).toLocaleDateString('ky-KG');
+            acc[date] = (acc[date] || 0) + 1;
+            return acc;
+        }, {}) || {};
 
         res.json({
             success: true,
             stats: {
-                total_patients: data.patients.length,
-                warning_count: warning,
-                critical_count: danger,
-                normal_count: normal
+                totalDoctors,
+                totalPatients,
+                totalVisits,
+                aiStats: {
+                    normal: aiStats.normal || 0,
+                    warning: aiStats.warning || 0,
+                    danger: aiStats.danger || 0
+                },
+                doctors: doctorStats,
+                dailyStats: Object.entries(dailyStats).map(([date, count]) => ({ date, count }))
             }
         });
 
-    } catch (e) {
-        console.error('Stats error:', e);
-        res.status(500).json({ 
-            success: false,
-            error: "Stats error" 
-        });
+    } catch (error) {
+        console.error('Stats error:', error);
+        res.status(500).json({ error: 'Статистиканы алууда ката' });
     }
 });
 
-// ===== SEARCH PATIENT =====
-
-app.get('/api/patients/search/:inn', async (req, res) => {
+// === ВРАЧ: Өз кабинети ===
+app.get('/api/doctor/patients', authMiddleware, roleMiddleware(['doctor']), async (req, res) => {
     try {
-        const data = await readData();
-        const patient = data.patients.find(p => p.inn === req.params.inn);
-
-        if (!patient) {
-            return res.json({ 
-                success: false,
-                message: "Пациент табылган жок"
-            });
-        }
-
-        res.json({
-            success: true,
-            patient
-        });
-    } catch (e) {
-        console.error('Search error:', e);
-        res.status(500).json({
-            success: false,
-            error: "Издөөдө ката кетти"
-        });
-    }
-});
-
-// ===== GENERAL SEARCH =====
-
-app.get('/api/patients', async (req, res) => {
-    try {
-        const data = await readData();
-        const search = req.query.search || '';
-
-        if (!search.trim()) {
-            return res.json({
-                success: true,
-                patients: data.patients,
-                pagination: {
-                    total: data.patients.length,
-                    page: 1,
-                    limit: data.patients.length
-                }
-            });
-        }
-
-        const found = data.patients.filter(p => {
-            const fullName = p.fullName || p.full_name || '';
-            const inn = p.inn || '';
-            const searchLower = search.toLowerCase();
-            return fullName.toLowerCase().includes(searchLower) || 
-                   inn.includes(search);
-        });
-
-        res.json({
-            success: true,
-            patients: found,
-            pagination: {
-                total: found.length,
-                page: 1,
-                limit: found.length
-            }
-        });
-    } catch (e) {
-        console.error('Search error:', e);
-        res.status(500).json({
-            success: false,
-            error: "Издөөдө ката кетти"
-        });
-    }
-});
-
-// ===== NEW PATIENT =====
-
-app.post('/api/patients', async (req, res) => {
-    try {
-        const { inn, fullName, birthDate, phone, address } = req.body;
+        const doctorId = req.user.id;
+        const patients = await readFile('patients.json');
         
+        const myPatients = patients.patients?.filter(p => p.createdBy === doctorId) || [];
+        
+        // Ар бир пациенттин акыркы визитин кошуу
+        const visits = await readFile('visits.json');
+        const patientsWithVisits = myPatients.map(p => {
+            const patientVisits = visits.visits?.filter(v => v.patientId === p.id) || [];
+            const lastVisit = patientVisits.length > 0 
+                ? patientVisits.sort((a, b) => new Date(b.visitDate) - new Date(a.visitDate))[0]
+                : null;
+            return {
+                ...p,
+                lastVisit,
+                totalVisits: patientVisits.length
+            };
+        });
+
+        res.json({
+            success: true,
+            patients: patientsWithVisits,
+            total: patientsWithVisits.length
+        });
+
+    } catch (error) {
+        console.error('Get patients error:', error);
+        res.status(500).json({ error: 'Пациенттерди алууда ката' });
+    }
+});
+
+// Врач: Пациент издөө
+app.get('/api/doctor/patients/search', authMiddleware, roleMiddleware(['doctor']), async (req, res) => {
+    try {
+        const doctorId = req.user.id;
+        const { q } = req.query;
+        
+        if (!q) {
+            return res.json({ success: true, patients: [], total: 0 });
+        }
+
+        const patients = await readFile('patients.json');
+        const myPatients = patients.patients?.filter(p => 
+            p.createdBy === doctorId && 
+            (p.fullName?.toLowerCase().includes(q.toLowerCase()) ||
+             p.inn?.includes(q) ||
+             p.phone?.includes(q))
+        ) || [];
+
+        res.json({
+            success: true,
+            patients: myPatients,
+            total: myPatients.length
+        });
+
+    } catch (error) {
+        console.error('Search patients error:', error);
+        res.status(500).json({ error: 'Издөөдө ката' });
+    }
+});
+
+// Врач: Пациент кошуу
+app.post('/api/doctor/patients', authMiddleware, roleMiddleware(['doctor']), async (req, res) => {
+    try {
+        const doctorId = req.user.id;
+        const { inn, fullName, birthDate, gender, phone, address, bloodGroup, rhFactor, height, weight, allergy, chronicDiseases, currentMedicines } = req.body;
+
         if (!inn || !fullName) {
-            return res.json({
-                success: false,
-                error: "ИНН жана аты-жөнү милдеттүү"
-            });
+            return res.status(400).json({ error: 'ИНН жана аты-жөнү милдеттүү' });
         }
 
-        const data = await readData();
+        const patients = await readFile('patients.json');
+        if (!patients.patients) patients.patients = [];
 
-        const exists = data.patients.find(p => p.inn === inn);
-
-        if (exists) {
-            return res.json({
-                success: false,
-                error: "Мындай ИНН менен пациент бар"
-            });
+        // ИНН уникалдуулугун текшерүү
+        if (patients.patients.find(p => p.inn === inn)) {
+            return res.status(400).json({ error: 'Мындай ИНН бар' });
         }
 
-        const patient = {
+        // BMI эсептөө
+        let bmi = null;
+        if (height && weight) {
+            const heightInMeters = height / 100;
+            bmi = Math.round((weight / (heightInMeters * heightInMeters)) * 10) / 10;
+        }
+
+        const newPatient = {
+            id: generateId('pat'),
             inn,
-            fullName: fullName,
-            full_name: fullName,
-            birthDate: birthDate || '',
-            birth_date: birthDate || '',
+            fullName,
+            birthDate: birthDate || null,
+            gender: gender || null,
             phone: phone || '',
             address: address || '',
-            history: [],
-            diseases: [],
-            appointments: [],
-            lastBP: null
+            bloodGroup: bloodGroup || null,
+            rhFactor: rhFactor || null,
+            height: height || null,
+            weight: weight || null,
+            bmi: bmi,
+            allergy: allergy || '',
+            chronicDiseases: chronicDiseases || [],
+            currentMedicines: currentMedicines || [],
+            createdBy: doctorId,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
         };
 
-        data.patients.push(patient);
-        await writeData(data);
+        patients.patients.push(newPatient);
+        await writeFile('patients.json', patients);
 
-        res.json({
-            success: true,
-            message: "Пациент ийгиликтүү кошулду",
-            patient: patient
+        // Аудитория
+        const audit = await readFile('audit.json');
+        if (!audit.logs) audit.logs = [];
+        audit.logs.push({
+            id: generateId('log'),
+            userId: doctorId,
+            action: 'create_patient',
+            details: `Жаңы пациент кошулду: ${fullName}`,
+            ip: req.ip || '127.0.0.1',
+            createdAt: new Date().toISOString()
         });
+        await writeFile('audit.json', audit);
 
-    } catch (e) {
-        console.error('Save patient error:', e);
-        res.status(500).json({
-            success: false,
-            error: "Сактоодо ката кетти"
-        });
+        res.json({ success: true, patient: newPatient });
+
+    } catch (error) {
+        console.error('Create patient error:', error);
+        res.status(500).json({ error: 'Пациент кошууда ката' });
     }
 });
 
-// ===== ADD BLOOD PRESSURE =====
-
-app.post('/api/blood-pressure', async (req, res) => {
+// Врач: Визит кошуу
+app.post('/api/doctor/visits', authMiddleware, roleMiddleware(['doctor']), async (req, res) => {
     try {
-        const { inn, systolic, diastolic, pulse, notes } = req.body;
-        
-        if (!inn || !systolic || !diastolic) {
-            return res.json({
-                success: false,
-                error: "ИНН, жогорку жана төмөнкү басым милдеттүү"
-            });
+        const doctorId = req.user.id;
+        const { patientId, systolic, diastolic, pulse, temperature, spo2, glucose, cholesterol, complaints, diagnosis, notes } = req.body;
+
+        if (!patientId || !systolic || !diastolic) {
+            return res.status(400).json({ error: 'Пациент, жогорку жана төмөнкү басым милдеттүү' });
         }
 
-        const data = await readData();
+        // AI анализ
+        const ai = getAIStatus(systolic, diastolic);
 
-        const patientIndex = data.patients.findIndex(p => p.inn === inn);
+        const visits = await readFile('visits.json');
+        if (!visits.visits) visits.visits = [];
 
-        if (patientIndex === -1) {
-            return res.json({
-                success: false,
-                error: "Пациент табылган жок"
-            });
-        }
-
-        const ai = analyzeBP(systolic, diastolic);
-
-        const record = {
-            check_date: new Date().toISOString(),
-            systolic: Number(systolic),
-            diastolic: Number(diastolic),
-            pulse: pulse ? Number(pulse) : 0,
-            notes: notes || '',
-            ai_status: ai.status
-        };
-
-        const patient = data.patients[patientIndex];
-
-        if (!patient.history) {
-            patient.history = [];
-        }
-
-        patient.history.push(record);
-
-        patient.lastBP = {
-            systolic: Number(systolic),
-            diastolic: Number(diastolic),
-            pulse: pulse ? Number(pulse) : 0,
-            date: new Date().toISOString(),
-            status: ai.status
-        };
-
-        await writeData(data);
-
-        const advice = await checkAndNotify(patient, record);
-
-        let trend = null;
-        if (patient.history.length >= 2) {
-            const sorted = [...patient.history].sort((a, b) => 
-                new Date(a.check_date) - new Date(b.check_date)
-            );
-            const last = sorted[sorted.length - 1];
-            const prev = sorted[sorted.length - 2];
-            
-            const diffSystolic = last.systolic - prev.systolic;
-            const diffDiastolic = last.diastolic - prev.diastolic;
-            
-            let trendMessage = '';
-            if (Math.abs(diffSystolic) < 5 && Math.abs(diffDiastolic) < 5) {
-                trendMessage = '➡️ Басым туруктуу';
-            } else if (diffSystolic > 5 || diffDiastolic > 5) {
-                trendMessage = '📈 Басым көтөрүлүп жатат!';
-            } else if (diffSystolic < -5 || diffDiastolic < -5) {
-                trendMessage = '📉 Басым түшүп жатат!';
-            }
-            
-            if (trendMessage) {
-                trend = {
-                    message: trendMessage,
-                    diffSystolic: diffSystolic,
-                    diffDiastolic: diffDiastolic
-                };
-            }
-        }
-
-        res.json({
-            success: true,
-            message: "Басым ийгиликтүү кошулду",
-            ai: ai,
-            trend: trend,
-            advice: advice
-        });
-
-    } catch (e) {
-        console.error('BP error:', e);
-        res.status(500).json({
-            success: false,
-            error: "Басым кошууда ката кетти"
-        });
-    }
-});
-
-// ===== DISEASES (ООРУЛАР) =====
-
-// Оору кошуу
-app.post('/api/diseases', async (req, res) => {
-    try {
-        const { inn, name, date, severity, symptoms, treatment, notes } = req.body;
-        
-        if (!inn || !name) {
-            return res.json({
-                success: false,
-                error: "ИНН жана оорунун аты милдеттүү"
-            });
-        }
-
-        const data = await readData();
-        const patientIndex = data.patients.findIndex(p => p.inn === inn);
-
-        if (patientIndex === -1) {
-            return res.json({
-                success: false,
-                error: "Пациент табылган жок"
-            });
-        }
-
-        const disease = {
-            id: Date.now().toString(),
-            name: name,
-            date: date || new Date().toISOString().split('T')[0],
-            severity: severity || 'medium',
-            symptoms: symptoms || '',
-            treatment: treatment || '',
-            notes: notes || '',
-            created_at: new Date().toISOString()
-        };
-
-        if (!data.patients[patientIndex].diseases) {
-            data.patients[patientIndex].diseases = [];
-        }
-
-        data.patients[patientIndex].diseases.push(disease);
-        await writeData(data);
-
-        res.json({
-            success: true,
-            message: "Оору ийгиликтүү кошулду",
-            disease: disease
-        });
-
-    } catch (e) {
-        console.error('Add disease error:', e);
-        res.status(500).json({
-            success: false,
-            error: "Оору кошууда ката кетти"
-        });
-    }
-});
-
-// Ооруларды алуу
-app.get('/api/diseases/:inn', async (req, res) => {
-    try {
-        const data = await readData();
-        const patient = data.patients.find(p => p.inn === req.params.inn);
-
-        if (!patient) {
-            return res.json({
-                success: false,
-                error: "Пациент табылган жок"
-            });
-        }
-
-        res.json({
-            success: true,
-            diseases: patient.diseases || []
-        });
-
-    } catch (e) {
-        console.error('Get diseases error:', e);
-        res.status(500).json({
-            success: false,
-            error: "Ооруларды алууда ката кетти"
-        });
-    }
-});
-
-// Ооруну өчүрүү
-app.delete('/api/diseases/:inn/:id', async (req, res) => {
-    try {
-        const { inn, id } = req.params;
-        const data = await readData();
-        const patientIndex = data.patients.findIndex(p => p.inn === inn);
-
-        if (patientIndex === -1) {
-            return res.json({
-                success: false,
-                error: "Пациент табылган жок"
-            });
-        }
-
-        if (!data.patients[patientIndex].diseases) {
-            return res.json({
-                success: false,
-                error: "Оорулар жок"
-            });
-        }
-
-        data.patients[patientIndex].diseases = data.patients[patientIndex].diseases.filter(d => d.id !== id);
-        await writeData(data);
-
-        res.json({
-            success: true,
-            message: "Оору өчүрүлдү"
-        });
-
-    } catch (e) {
-        console.error('Delete disease error:', e);
-        res.status(500).json({
-            success: false,
-            error: "Оору өчүрүүдө ката кетти"
-        });
-    }
-});
-
-// ===== APPOINTMENTS (КАБЫЛ АЛУУЛАР) =====
-
-// Кабыл алуу кошуу
-app.post('/api/appointments', async (req, res) => {
-    try {
-        const { inn, date, doctor, reason, diagnosis, notes } = req.body;
-        
-        if (!inn || !date) {
-            return res.json({
-                success: false,
-                error: "ИНН жана күнү милдеттүү"
-            });
-        }
-
-        const data = await readData();
-        const patientIndex = data.patients.findIndex(p => p.inn === inn);
-
-        if (patientIndex === -1) {
-            return res.json({
-                success: false,
-                error: "Пациент табылган жок"
-            });
-        }
-
-        const appointment = {
-            id: Date.now().toString(),
-            date: date,
-            doctor: doctor || '',
-            reason: reason || '',
+        const newVisit = {
+            id: generateId('vis'),
+            patientId,
+            doctorId,
+            visitDate: new Date().toISOString(),
+            systolic,
+            diastolic,
+            pulse: pulse || null,
+            temperature: temperature || null,
+            spo2: spo2 || null,
+            glucose: glucose || null,
+            cholesterol: cholesterol || null,
+            complaints: complaints || '',
             diagnosis: diagnosis || '',
             notes: notes || '',
-            created_at: new Date().toISOString()
+            aiRiskLevel: ai.riskLevel,
+            aiMessage: ai.message,
+            createdAt: new Date().toISOString()
         };
 
-        if (!data.patients[patientIndex].appointments) {
-            data.patients[patientIndex].appointments = [];
-        }
+        visits.visits.push(newVisit);
+        await writeFile('visits.json', visits);
 
-        data.patients[patientIndex].appointments.push(appointment);
-        await writeData(data);
+        // Аудитория
+        const audit = await readFile('audit.json');
+        if (!audit.logs) audit.logs = [];
+        audit.logs.push({
+            id: generateId('log'),
+            userId: doctorId,
+            action: 'create_visit',
+            details: `Визит кошулду: ${systolic}/${diastolic}`,
+            ip: req.ip || '127.0.0.1',
+            createdAt: new Date().toISOString()
+        });
+        await writeFile('audit.json', audit);
 
-        res.json({
-            success: true,
-            message: "Кабыл алуу ийгиликтүү кошулду",
-            appointment: appointment
+        res.json({ 
+            success: true, 
+            visit: newVisit,
+            ai: ai
         });
 
-    } catch (e) {
-        console.error('Add appointment error:', e);
-        res.status(500).json({
-            success: false,
-            error: "Кабыл алуу кошууда ката кетти"
-        });
+    } catch (error) {
+        console.error('Create visit error:', error);
+        res.status(500).json({ error: 'Визит кошууда ката' });
     }
 });
 
-// Кабыл алууларды алуу
-app.get('/api/appointments/:inn', async (req, res) => {
+// Врач: Статистика
+app.get('/api/doctor/stats', authMiddleware, roleMiddleware(['doctor']), async (req, res) => {
     try {
-        const data = await readData();
-        const patient = data.patients.find(p => p.inn === req.params.inn);
+        const doctorId = req.user.id;
+        const visits = await readFile('visits.json');
+        const patients = await readFile('patients.json');
 
+        const myVisits = visits.visits?.filter(v => v.doctorId === doctorId) || [];
+        const myPatients = patients.patients?.filter(p => p.createdBy === doctorId) || [];
+
+        // Күндөр боюнча статистика
+        const dailyStats = myVisits.reduce((acc, v) => {
+            const date = new Date(v.visitDate).toLocaleDateString('ky-KG');
+            acc[date] = (acc[date] || 0) + 1;
+            return acc;
+        }, {});
+
+        // AI статистикасы
+        const aiStats = myVisits.reduce((acc, v) => {
+            const key = v.aiRiskLevel || 'unknown';
+            acc[key] = (acc[key] || 0) + 1;
+            return acc;
+        }, {});
+
+        // Акыркы 7 күндөгү активдүүлүк
+        const now = new Date();
+        const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        const recentVisits = myVisits.filter(v => new Date(v.visitDate) >= weekAgo);
+
+        // Орточо басым
+        const avgBP = calculateAverageBP(myVisits);
+
+        res.json({
+            success: true,
+            stats: {
+                totalPatients: myPatients.length,
+                totalVisits: myVisits.length,
+                recentVisits: recentVisits.length,
+                dailyStats: Object.entries(dailyStats).map(([date, count]) => ({ date, count })),
+                aiStats: {
+                    normal: aiStats.normal || 0,
+                    warning: aiStats.warning || 0,
+                    danger: aiStats.danger || 0
+                },
+                avgBP: avgBP,
+                lastActivity: myVisits.length > 0 
+                    ? myVisits.sort((a, b) => new Date(b.visitDate) - new Date(a.visitDate))[0]?.visitDate
+                    : null
+            }
+        });
+
+    } catch (error) {
+        console.error('Doctor stats error:', error);
+        res.status(500).json({ error: 'Статистиканы алууда ката' });
+    }
+});
+
+// Врач: Пациенттин тарыхы
+app.get('/api/doctor/patients/:id/history', authMiddleware, roleMiddleware(['doctor']), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const doctorId = req.user.id;
+        
+        const patients = await readFile('patients.json');
+        const patient = patients.patients?.find(p => p.id === id && p.createdBy === doctorId);
+        
         if (!patient) {
-            return res.json({
-                success: false,
-                error: "Пациент табылган жок"
-            });
+            return res.status(404).json({ error: 'Пациент табылган жок' });
         }
 
-        // Дата боюнча сорттоо (эң жаңысы биринчи)
-        const appointments = (patient.appointments || []).sort((a, b) => 
-            new Date(b.date) - new Date(a.date)
-        );
+        const visits = await readFile('visits.json');
+        const patientVisits = visits.visits?.filter(v => v.patientId === id) || [];
 
         res.json({
             success: true,
-            appointments: appointments
+            patient,
+            visits: patientVisits.sort((a, b) => new Date(b.visitDate) - new Date(a.visitDate))
         });
 
-    } catch (e) {
-        console.error('Get appointments error:', e);
-        res.status(500).json({
-            success: false,
-            error: "Кабыл алууларды алууда ката кетти"
-        });
+    } catch (error) {
+        console.error('Get history error:', error);
+        res.status(500).json({ error: 'Тарыхты алууда ката' });
     }
 });
 
-// Кабыл алууну өчүрүү
-app.delete('/api/appointments/:inn/:id', async (req, res) => {
+// === РЕЗЕРВДИК КӨЧҮРМӨ ===
+app.post('/api/backup', authMiddleware, async (req, res) => {
     try {
-        const { inn, id } = req.params;
-        const data = await readData();
-        const patientIndex = data.patients.findIndex(p => p.inn === inn);
+        await ensureDataDir();
+        
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const backupFile = path.join(BACKUP_DIR, `backup-${timestamp}.json`);
+        
+        const users = await readFile('users.json');
+        const patients = await readFile('patients.json');
+        const visits = await readFile('visits.json');
+        const audit = await readFile('audit.json');
 
-        if (patientIndex === -1) {
-            return res.json({
-                success: false,
-                error: "Пациент табылган жок"
-            });
+        const backupData = {
+            timestamp: new Date().toISOString(),
+            data: {
+                users,
+                patients,
+                visits,
+                audit
+            }
+        };
+
+        await fs.writeFile(backupFile, JSON.stringify(backupData, null, 2));
+
+        // Эски бэкаптарды тазалоо (акыркы 10 бэкапты калтыруу)
+        const files = await fs.readdir(BACKUP_DIR);
+        const backupFiles = files
+            .filter(f => f.startsWith('backup-'))
+            .sort()
+            .reverse();
+        
+        if (backupFiles.length > 10) {
+            for (let i = 10; i < backupFiles.length; i++) {
+                await fs.unlink(path.join(BACKUP_DIR, backupFiles[i]));
+            }
         }
-
-        if (!data.patients[patientIndex].appointments) {
-            return res.json({
-                success: false,
-                error: "Кабыл алуулар жок"
-            });
-        }
-
-        data.patients[patientIndex].appointments = data.patients[patientIndex].appointments.filter(a => a.id !== id);
-        await writeData(data);
-
-        res.json({
-            success: true,
-            message: "Кабыл алуу өчүрүлдү"
-        });
-
-    } catch (e) {
-        console.error('Delete appointment error:', e);
-        res.status(500).json({
-            success: false,
-            error: "Кабыл алуу өчүрүүдө ката кетти"
-        });
-    }
-});
-
-// ===== BACKUP =====
-
-app.post('/api/backup', async (req, res) => {
-    try {
-        await fs.mkdir(BACKUP_DIR, { recursive: true });
-
-        const backupFile = path.join(
-            BACKUP_DIR,
-            `backup-${Date.now()}.json`
-        );
-
-        const data = await readData();
-
-        await fs.writeFile(
-            backupFile,
-            JSON.stringify(data, null, 2)
-        );
 
         const stat = await fs.stat(backupFile);
 
         res.json({
             success: true,
+            message: 'Резервдик көчүрмө алынды',
             size: stat.size,
-            message: "Резервдик көчүрмө алынды"
+            file: backupFile
         });
 
-    } catch (e) {
-        console.error('Backup error:', e);
-        res.status(500).json({
-            success: false,
-            error: "Резервдөөдө ката кетти"
-        });
+    } catch (error) {
+        console.error('Backup error:', error);
+        res.status(500).json({ error: 'Резервдөөдө ката' });
     }
 });
 
-// ===== ERROR HANDLING MIDDLEWARE =====
+// === АУДИТОРИЯ ЖУРНАЛЫ ===
+app.get('/api/audit', authMiddleware, roleMiddleware(['admin']), async (req, res) => {
+    try {
+        const audit = await readFile('audit.json');
+        const logs = audit.logs || [];
+        
+        // Акыркы 100 жазууну көрсөтүү
+        const recentLogs = logs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 100);
 
-app.use((err, req, res, next) => {
-    console.error('Server error:', err);
-    res.status(500).json({
-        success: false,
-        error: "Серверде ката кетти"
-    });
+        res.json({
+            success: true,
+            logs: recentLogs,
+            total: logs.length
+        });
+
+    } catch (error) {
+        console.error('Get audit error:', error);
+        res.status(500).json({ error: 'Аудиторияны алууда ката' });
+    }
 });
 
-app.listen(PORT, () => {
+// === СЕРВЕРДИ ИШКЕ КОШУУ ===
+app.listen(PORT, async () => {
+    await initializeData();
     console.log(`🚀 Сервер иштеп жатат: http://localhost:${PORT}`);
+    console.log(`📁 Маалыматтар: ${DATA_DIR}`);
+    console.log(`💾 Бэкаптар: ${BACKUP_DIR}`);
+    console.log(`👤 Админ: admin / admin123`);
 });

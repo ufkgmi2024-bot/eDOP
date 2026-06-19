@@ -49,8 +49,7 @@ async function searchPatient() {
                 currentPatient = data.patient;
                 displayPatientInfo(currentPatient);
                 document.getElementById('patientInfo').classList.remove('d-none');
-                const name = currentPatient.full_name || currentPatient.fullName || 'Пациент';
-                showMessage(`Пациент табылды: ${name}`, 'success');
+                showMessage(`Пациент табылды: ${currentPatient.full_name}`, 'success');
             } else {
                 showMessage('Пациент табылган жок. Жаңы пациент кошуңуз.', 'info');
                 document.getElementById('patientInfo').classList.add('d-none');
@@ -83,18 +82,11 @@ async function searchPatient() {
 // ==================== ПАЦИЕНТТИ КӨРСӨТҮҮ ====================
 
 function displayPatientInfo(patient) {
-    // Бул жерде patient.full_name же patient.fullName бар экенин текшеребиз
-    const fullName = patient.full_name || patient.fullName || 'Аты-жөнү жок';
-    const birthDate = patient.birth_date || patient.birthDate || 'Көрсөтүлө элек';
-    const phone = patient.phone || 'Көрсөтүлө элек';
-    const address = patient.address || 'Көрсөтүлө элек';
-    const inn = patient.inn || 'ИНН жок';
-    
-    document.getElementById('patientName').textContent = fullName;
-    document.getElementById('patientBirth').textContent = birthDate;
-    document.getElementById('patientPhone').textContent = phone;
-    document.getElementById('patientAddress').textContent = address;
-    document.getElementById('patientInn').textContent = inn;
+    document.getElementById('patientName').textContent = patient.full_name || patient.fullName;
+    document.getElementById('patientBirth').textContent = patient.birth_date || patient.birthDate || 'Көрсөтүлө элек';
+    document.getElementById('patientPhone').textContent = patient.phone || 'Көрсөтүлө элек';
+    document.getElementById('patientAddress').textContent = patient.address || 'Көрсөтүлө элек';
+    document.getElementById('patientInn').textContent = patient.inn;
 
     // Акыркы басым
     const lastBP = patient.lastBP;
@@ -120,13 +112,6 @@ function displayPatientInfo(patient) {
     
     // AI анализин тазалоо
     document.getElementById('aiAnalysis').innerHTML = '';
-    document.getElementById('aiAdviceContainer').innerHTML = '';
-    
-    // Ооруларды жүктөө
-    loadDiseases();
-    
-    // Кабыл алууларды жүктөө
-    loadAppointments();
 }
 
 function displayHistory(history) {
@@ -209,51 +194,6 @@ function analyzeTrend(patient) {
     `;
 }
 
-// ==================== AI КЕҢЕШИН КӨРСӨТҮҮ ====================
-
-function displayAIAdvice(advice) {
-    if (!advice) return;
-    
-    let container = document.getElementById('aiAdviceContainer');
-    if (!container) {
-        const aiAnalysis = document.getElementById('aiAnalysis');
-        if (aiAnalysis) {
-            container = document.createElement('div');
-            container.id = 'aiAdviceContainer';
-            container.className = 'mt-3';
-            aiAnalysis.after(container);
-        } else {
-            return;
-        }
-    }
-    
-    let html = '<div class="ai-advice-box">';
-    html += '<h6>🤖 AI кеңеши:</h6>';
-    
-    if (advice.immediate) {
-        html += `<p><strong>📋 Эмне кылуу керек:</strong><br>${advice.immediate}</p>`;
-    }
-    
-    if (advice.actions && advice.actions.length > 0) {
-        html += '<ul>';
-        advice.actions.forEach(action => {
-            html += `<li>${action}</li>`;
-        });
-        html += '</ul>';
-    }
-    
-    if (advice.lifestyle) {
-        html += `<p><strong>💡 Сунуштар:</strong><br>${advice.lifestyle.replace(/\n/g, '<br>')}</p>`;
-    }
-    
-    if (advice.emergency) {
-        html += `<p class="emergency">🆘 ${advice.emergency.replace(/\n/g, '<br>')}</p>`;
-    }
-    
-    html += '</div>';
-    container.innerHTML = html;
-}
-
 // ==================== БАСЫМ КОШУУ ====================
 
 async function addBloodPressure() {
@@ -302,19 +242,12 @@ async function addBloodPressure() {
         if (data.success) {
             // AI анализди көрсөтүү
             const ai = data.ai;
-            let aiHtml = `
+            document.getElementById('aiAnalysis').innerHTML = `
                 <div class="ai-analysis-box ${ai.status}">
                     <strong>🤖 AI анализи:</strong> ${ai.message}
                     ${data.trend ? `<br><small>📊 ${data.trend.message}</small>` : ''}
                 </div>
             `;
-            
-            // AI кеңешин көрсөтүү
-            if (data.advice) {
-                displayAIAdvice(data.advice);
-            }
-            
-            document.getElementById('aiAnalysis').innerHTML = aiHtml;
 
             showMessage('✅ Басым ийгиликтүү кошулду!', 'success');
             
@@ -336,288 +269,6 @@ async function addBloodPressure() {
     }
 
     showLoading(false);
-}
-
-// ==================== ООРУЛАР ====================
-
-async function addDisease() {
-    if (!currentPatient) {
-        showMessage('Алгач пациентти табыңыз!', 'warning');
-        return;
-    }
-
-    const name = document.getElementById('diseaseName').value.trim();
-    const date = document.getElementById('diseaseDate').value;
-    const severity = document.getElementById('diseaseSeverity').value;
-    const symptoms = document.getElementById('diseaseSymptoms').value.trim();
-    const treatment = document.getElementById('diseaseTreatment').value.trim();
-    const notes = document.getElementById('diseaseNotes').value.trim();
-
-    if (!name) {
-        showMessage('Оорунун атын жазыңыз!', 'warning');
-        return;
-    }
-
-    showLoading(true);
-
-    try {
-        const response = await fetch(`${API_URL}/api/diseases`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                inn: currentPatient.inn,
-                name,
-                date,
-                severity,
-                symptoms,
-                treatment,
-                notes
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showMessage('✅ Оору ийгиликтүү кошулду!', 'success');
-            
-            document.getElementById('diseaseName').value = '';
-            document.getElementById('diseaseDate').value = '';
-            document.getElementById('diseaseSymptoms').value = '';
-            document.getElementById('diseaseTreatment').value = '';
-            document.getElementById('diseaseNotes').value = '';
-
-            await loadDiseases();
-        } else {
-            showMessage(data.error || 'Оору кошууда ката!', 'danger');
-        }
-    } catch (error) {
-        console.error('Ката:', error);
-        showMessage('Сервер менен байланыш жок!', 'danger');
-    }
-
-    showLoading(false);
-}
-
-async function loadDiseases() {
-    if (!currentPatient) return;
-
-    try {
-        const response = await fetch(`${API_URL}/api/diseases/${currentPatient.inn}`);
-        const data = await response.json();
-
-        const container = document.getElementById('diseaseList');
-
-        if (!data.success || !data.diseases || data.diseases.length === 0) {
-            container.innerHTML = '<p class="text-muted">Оорулар жок</p>';
-            return;
-        }
-
-        const severityMap = {
-            'low': 'Жеңил',
-            'medium': 'Орто',
-            'high': 'Оор'
-        };
-
-        const severityClass = {
-            'low': 'severity-low',
-            'medium': 'severity-medium',
-            'high': 'severity-high'
-        };
-
-        container.innerHTML = data.diseases.map(d => `
-            <div class="disease-item">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <strong>${d.name}</strong>
-                        <span class="${severityClass[d.severity]}">(${severityMap[d.severity]})</span>
-                        <br>
-                        <small class="text-muted">
-                            📅 ${d.date || 'Көрсөтүлө элек'}
-                            ${d.symptoms ? ` | 🤒 ${d.symptoms}` : ''}
-                            ${d.treatment ? ` | 💊 ${d.treatment}` : ''}
-                        </small>
-                        ${d.notes ? `<br><small class="text-muted">📝 ${d.notes}</small>` : ''}
-                    </div>
-                    <button onclick="deleteDisease('${d.id}')" class="btn btn-sm btn-outline-danger">
-                        <i class="bi bi-trash"></i>
-                    </button>
-                </div>
-            </div>
-        `).join('');
-
-    } catch (error) {
-        console.error('Ооруларды жүктөөдө ката:', error);
-    }
-}
-
-async function deleteDisease(id) {
-    if (!confirm('Бул ооруну өчүрүү керекпи?')) return;
-
-    try {
-        const response = await fetch(`${API_URL}/api/diseases/${currentPatient.inn}/${id}`, {
-            method: 'DELETE'
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showMessage('✅ Оору өчүрүлдү', 'success');
-            await loadDiseases();
-        } else {
-            showMessage(data.error || 'Өчүрүүдө ката!', 'danger');
-        }
-    } catch (error) {
-        console.error('Ката:', error);
-        showMessage('Сервер менен байланыш жок!', 'danger');
-    }
-}
-
-// ==================== КАБЫЛ АЛУУЛАР ====================
-
-async function addAppointment() {
-    if (!currentPatient) {
-        showMessage('Алгач пациентти табыңыз!', 'warning');
-        return;
-    }
-
-    const date = document.getElementById('appointmentDate').value;
-    const doctor = document.getElementById('appointmentDoctor').value.trim();
-    const reason = document.getElementById('appointmentReason').value.trim();
-    const diagnosis = document.getElementById('appointmentDiagnosis').value.trim();
-    const notes = document.getElementById('appointmentNotes').value.trim();
-
-    if (!date) {
-        showMessage('Кабыл алуу күнүн тандаңыз!', 'warning');
-        return;
-    }
-
-    showLoading(true);
-
-    try {
-        const response = await fetch(`${API_URL}/api/appointments`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                inn: currentPatient.inn,
-                date,
-                doctor,
-                reason,
-                diagnosis,
-                notes
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showMessage('✅ Кабыл алуу ийгиликтүү кошулду!', 'success');
-            
-            document.getElementById('appointmentDate').value = '';
-            document.getElementById('appointmentDoctor').value = '';
-            document.getElementById('appointmentReason').value = '';
-            document.getElementById('appointmentDiagnosis').value = '';
-            document.getElementById('appointmentNotes').value = '';
-
-            await loadAppointments();
-        } else {
-            showMessage(data.error || 'Кабыл алуу кошууда ката!', 'danger');
-        }
-    } catch (error) {
-        console.error('Ката:', error);
-        showMessage('Сервер менен байланыш жок!', 'danger');
-    }
-
-    showLoading(false);
-}
-
-async function loadAppointments() {
-    if (!currentPatient) return;
-
-    try {
-        const response = await fetch(`${API_URL}/api/appointments/${currentPatient.inn}`);
-        const data = await response.json();
-
-        const container = document.getElementById('appointmentList');
-
-        if (!data.success || !data.appointments || data.appointments.length === 0) {
-            container.innerHTML = '<p class="text-muted">Кабыл алуулар жок</p>';
-            return;
-        }
-
-        container.innerHTML = data.appointments.map(a => `
-            <div class="appointment-item">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <span class="date">📅 ${new Date(a.date).toLocaleString('ky-KG')}</span>
-                        ${a.doctor ? ` | 👨‍⚕️ ${a.doctor}` : ''}
-                        <br>
-                        ${a.reason ? `<strong>Себеби:</strong> ${a.reason}` : ''}
-                        ${a.diagnosis ? `<br><strong>Диагноз:</strong> ${a.diagnosis}` : ''}
-                        ${a.notes ? `<br><small class="text-muted">📝 ${a.notes}</small>` : ''}
-                    </div>
-                    <button onclick="deleteAppointment('${a.id}')" class="btn btn-sm btn-outline-danger">
-                        <i class="bi bi-trash"></i>
-                    </button>
-                </div>
-            </div>
-        `).join('');
-
-    } catch (error) {
-        console.error('Кабыл алууларды жүктөөдө ката:', error);
-    }
-}
-
-async function deleteAppointment(id) {
-    if (!confirm('Бул кабыл алууну өчүрүү керекпи?')) return;
-
-    try {
-        const response = await fetch(`${API_URL}/api/appointments/${currentPatient.inn}/${id}`, {
-            method: 'DELETE'
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            showMessage('✅ Кабыл алуу өчүрүлдү', 'success');
-            await loadAppointments();
-        } else {
-            showMessage(data.error || 'Өчүрүүдө ката!', 'danger');
-        }
-    } catch (error) {
-        console.error('Ката:', error);
-        showMessage('Сервер менен байланыш жок!', 'danger');
-    }
-}
-
-// ==================== ЭКСПОРТ ====================
-
-async function exportAll() {
-    if (!currentPatient) {
-        showMessage('Алгач пациентти табыңыз!', 'warning');
-        return;
-    }
-
-    try {
-        const data = {
-            patient: currentPatient,
-            exported_at: new Date().toISOString()
-        };
-
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `patient_${currentPatient.inn}_${new Date().toISOString().split('T')[0]}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        
-        showMessage('✅ Экспорт ийгиликтүү!', 'success');
-    } catch (error) {
-        console.error('Экспорттоо ката:', error);
-        showMessage('Экспорттоодо ката!', 'danger');
-    }
 }
 
 // ==================== ЖАҢЫ ПАЦИЕНТ ====================
@@ -738,6 +389,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Сандарды гана терүү
     document.getElementById('searchInput').addEventListener('input', function(e) {
+        // ИНН үчүн сандарды гана калтыруу (14 сан)
         if (this.value.length <= 14) {
             this.value = this.value.replace(/[^0-9]/g, '');
         }
@@ -745,20 +397,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     document.getElementById('newInn').addEventListener('input', function(e) {
         this.value = this.value.replace(/\D/g, '').slice(0, 14);
-    });
-
-    // Оору формасындагы Enter
-    document.getElementById('diseaseName').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            addDisease();
-        }
-    });
-
-    // Кабыл алуу формасындагы Enter
-    document.getElementById('appointmentDate').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            addAppointment();
-        }
     });
 
     // Баштапкы жүктөө
