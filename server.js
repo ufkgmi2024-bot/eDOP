@@ -66,6 +66,21 @@ async function initializeData() {
                     isActive: true,
                     createdAt: new Date().toISOString(),
                     lastLogin: null
+                },
+                // Демо врач (опционально)
+                {
+                    id: 'doc_demo_001',
+                    username: 'doctor',
+                    password: await bcrypt.hash('doctor123', 10),
+                    fullName: 'Доктор Демо',
+                    role: 'doctor',
+                    specialty: 'Терапевт',
+                    phone: '+996700222222',
+                    email: 'doctor@clinic.kg',
+                    cabinet: 'Кабинет №101',
+                    isActive: true,
+                    createdAt: new Date().toISOString(),
+                    lastLogin: null
                 }
             ]
         };
@@ -772,11 +787,46 @@ app.get('/api/audit', authMiddleware, roleMiddleware(['admin']), async (req, res
     }
 });
 
-// === СЕРВЕРДИ ИШКЕ КОШУУ ===
+// ==================== HTML БЕТТЕР (ROUTER) ====================
+
+// Башкы бет - login.html
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+// Login бети (эгерде /login деп кирсе)
+app.get('/login', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+// Admin панели
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// Doctor кабинети
+app.get('/doctor', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'doctor.html'));
+});
+
+// ==================== 404 КАТАСЫ ====================
+app.use((req, res) => {
+    res.status(404).sendFile(path.join(__dirname, 'public', '404.html'));
+});
+
+// ==================== СЕРВЕРДИ ИШКЕ КОШУУ ====================
 app.listen(PORT, async () => {
     await initializeData();
+    console.log('='.repeat(50));
     console.log(`🚀 Сервер иштеп жатат: http://localhost:${PORT}`);
     console.log(`📁 Маалыматтар: ${DATA_DIR}`);
     console.log(`💾 Бэкаптар: ${BACKUP_DIR}`);
     console.log(`👤 Админ: admin / admin123`);
+    console.log(`👨‍⚕️ Демо врач: doctor / doctor123`);
+    console.log('='.repeat(50));
+    console.log('📋 Жеткиликтүү баракчалар:');
+    console.log(`   🔐 Кирүү: http://localhost:${PORT}/login`);
+    console.log(`   👨‍💼 Админ: http://localhost:${PORT}/admin`);
+    console.log(`   👨‍⚕️ Врач: http://localhost:${PORT}/doctor`);
+    console.log('='.repeat(50));
 });
